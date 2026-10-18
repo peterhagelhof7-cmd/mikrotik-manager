@@ -87,6 +87,26 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 		}
 		writeJSON(rw, w.upd.Info())
 	})))
+	mux.Handle("GET /api/auto-update", w.auth(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { writeJSON(rw, w.pl.AutoUpdateView()) })))
+	mux.Handle("POST /api/auto-update", w.auth(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		var a AutoUpdate
+		if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 65536)).Decode(&a); err != nil {
+			http.Error(rw, "ungültige Daten", http.StatusBadRequest)
+			return
+		}
+		if err := w.pl.SaveAutoUpdate(a); err != nil {
+			http.Error(rw, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(rw, w.pl.AutoUpdateView())
+	})))
+	mux.Handle("POST /api/auto-update/run", w.auth(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		if err := w.pl.RunAutoUpdate("von Hand"); err != nil {
+			http.Error(rw, err.Error(), http.StatusConflict)
+			return
+		}
+		writeJSON(rw, w.pl.AutoUpdateView())
+	})))
 	mux.Handle("GET /api/central", w.auth(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { writeJSON(rw, w.pl.Central()) })))
 	mux.Handle("POST /api/central", w.auth(http.HandlerFunc(w.saveCentral)))
 	mux.Handle("POST /api/central/preview", w.auth(http.HandlerFunc(w.centralPreview)))

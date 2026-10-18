@@ -63,6 +63,7 @@ func main() {
 	go pl.run(ctx)
 	go pl.runNightlyBackup(ctx)
 	go pl.runClients(ctx)
+	go pl.runAutoUpdates(ctx)
 	upd := newSelfUpdater(cfg, pl.jobs, st.save)
 	go upd.run(ctx)
 

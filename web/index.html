@@ -82,7 +82,29 @@ footer{color:var(--muted);font-size:12px;padding:16px;text-align:center}
   <nav class="tabs" role="tablist">
     <button role="tab" data-tab="tabDev" class="active" title="Zeigt die Geräteliste mit Update, Neustart, Einstellungen, WLAN und Backups.">Geräte</button>
     <button role="tab" data-tab="tabCentral" title="Zeigt die zentrale WLAN-Verwaltung: eine WLAN-Konfiguration, die auf allen ausgewählten Geräten gleich ausgerollt wird. Umschalten ändert nichts.">Zentrale WLAN-Verwaltung <span id="cBadge"></span></button>
+    <button role="tab" data-tab="tabAuto" title="Zeigt die automatischen Updates: zu einer festen Zeit werden die Geräte nacheinander aktualisiert, auf Wunsch mit RouterBOARD-Firmware. Umschalten ändert nichts.">Automatische Updates <span id="aBadge"></span></button>
   </nav>
+  <div id="tabAuto" hidden>
+    <div class="card">
+      <h3>Automatische Updates</h3>
+      <div class="hint">Zur eingestellten Zeit prüft der Manager jedes ausgewählte Gerät auf ein neueres RouterOS (im Kanal des Geräts) und installiert es – Gerät für Gerät, nie mehrere gleichzeitig, jeweils mit Backup vorab. Geräte ohne Update bleiben unberührt. Läuft zur Startzeit noch etwas (z. B. das nächtliche Backup), wird gewartet. Jedes aktualisierte Gerät startet ein- bis zweimal neu (je ca. 1–2 Minuten offline).</div>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:10px;color:var(--fg)"><input type="checkbox" id="auEnabled" style="width:auto" title="Schaltet die automatischen Updates ein. Wird erst mit „Speichern“ übernommen."><b>aktiviert</b></label>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;margin-top:8px">
+        <div><label for="auTime">Uhrzeit</label><input type="time" id="auTime" style="width:auto" title="Uhrzeit (Ortszeit des Managers), zu der die Updates starten. Empfohlen: nachts, nicht gleichzeitig mit dem nächtlichen Backup."></div>
+        <div><label>Wochentage</label><div id="auDays" style="display:flex;gap:10px;flex-wrap:wrap"></div></div>
+      </div>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:10px;color:var(--fg)"><input type="checkbox" id="auFirmware" style="width:auto" title="Haken = nach RouterOS auch die RouterBOARD-Firmware aktualisieren (ein zusätzlicher Neustart je Gerät). Ohne Haken wird nur RouterOS aktualisiert, ausstehende Firmware wird nur angezeigt.">RouterBOARD-Firmware mit aktualisieren (zusätzlicher Neustart je Gerät)</label>
+      <label style="margin-top:10px">Geräte <span class="hint">(keines gewählt = alle)</span></label>
+      <div id="auDevices"></div>
+      <div class="btns" style="justify-content:flex-start;align-items:center">
+        <button class="primary" id="auSave" title="Speichert die Einstellung. Ändert nichts an den Geräten.">Speichern</button>
+        <button id="auRun" title="Startet den Update-Lauf sofort mit der gespeicherten Einstellung (nach Rückfrage): Geräte mit neuerem RouterOS werden nacheinander aktualisiert und starten dabei neu.">Jetzt ausführen</button>
+        <span class="hint" id="auMsg"></span>
+      </div>
+    </div>
+    <div class="card"><h3>Stand der Geräte</h3><div class="hint">laut letzter Abfrage; die genaue Prüfung macht der Update-Lauf selbst</div><div class="wrap" id="auState" style="margin-top:8px"></div></div>
+    <div class="card" id="auLast" hidden></div>
+  </div>
   <div id="tabCentral" hidden>
     <div class="card">
       <h3>Zentrale WLAN-Verwaltung</h3>
@@ -586,7 +608,53 @@ function renderCentralResult(rows) {
 document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tabs [data-tab]').forEach(x => { x.classList.toggle('active', x === b); $('#' + x.dataset.tab).hidden = x !== b; });
   if (b.dataset.tab === 'tabCentral' && !document.querySelector('#cNets tr') && central) renderCentral(central);
+  if (b.dataset.tab === 'tabAuto') { loadAuto(); renderAutoState(); }
 });
+
+// --- Automatische Updates ---
+let auto = null;
+const DAYS = [[1, 'Mo'], [2, 'Di'], [3, 'Mi'], [4, 'Do'], [5, 'Fr'], [6, 'Sa'], [0, 'So']];
+function renderAuto(a, keepForm) {
+  auto = a;
+  $('#aBadge').innerHTML = a.running ? '<span class="badge b-warn">läuft</span>' : a.enabled ? '<span class="badge b-ok">aktiv</span>' : '';
+  if (!keepForm) {
+    $('#auEnabled').checked = a.enabled; $('#auTime').value = a.time; $('#auFirmware').checked = a.firmware;
+    $('#auDays').innerHTML = DAYS.map(([d, l]) => `<label style="display:flex;gap:4px;align-items:center;margin:0;color:var(--fg)"><input type="checkbox" data-day="${d}" ${(a.days || []).includes(d) ? 'checked' : ''} style="width:auto" title="Updates am ${l} ausführen.">${l}</label>`).join('');
+    $('#auDevices').innerHTML = (data.devices || []).slice().sort((x, y) => (x.identity || '').localeCompare(y.identity || '')).map(d => `<label style="display:flex;gap:8px;align-items:center;color:var(--fg);margin:4px 0"><input type="checkbox" data-adev="${esc(d.id)}" ${(a.devices || []).includes(d.id) ? 'checked' : ''} style="width:auto" title="Haken = dieses Gerät wird automatisch aktualisiert. Ist kein Gerät gewählt, gilt es für alle."><b>${esc(d.identity)}</b> <span class="mute">${esc(d.model || d.board)} · ${esc(d.ip)}</span></label>`).join('');
+  }
+  const next = a.next && !a.next.startsWith('0001') ? new Date(a.next).toLocaleString('de-DE', {weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'}) : null;
+  $('#auMsg').textContent = a.running ? 'Update-Lauf aktiv – Fortschritt oben in der Statusleiste' : a.enabled ? `nächster Lauf: ${next || '–'}` : 'nicht aktiviert';
+  $('#auRun').disabled = !!a.running;
+  if (a.lastRun && !a.lastRun.startsWith('0001')) {
+    $('#auLast').hidden = false;
+    $('#auLast').innerHTML = `<h3>Letzter Lauf: ${new Date(a.lastRun).toLocaleString('de-DE')} (${esc(a.lastReason || '')})</h3>`
+      + (a.lastResults || []).map(r => `<div>${r.ok ? '<span class="badge b-ok">ok</span>' : '<span class="badge b-bad">Fehler</span>'} <b>${esc(r.identity)}</b> <span class="mute">${esc(r.msg)}</span></div>`).join('');
+  }
+}
+function renderAutoState() {
+  const rows = (data.devices || []).slice().sort((x, y) => (x.identity || '').localeCompare(y.identity || '')).map(d => {
+    const v = d.version || '', upd = d.latestVersion && v && !v.startsWith(d.latestVersion);
+    const fw = d.currentFirmware && d.upgradeFirmware && d.currentFirmware !== d.upgradeFirmware;
+    return `<tr><td><b>${esc(d.identity)}</b></td><td>${esc(v.split(' ')[0])}${upd ? ` <span class="badge b-warn">→ ${esc(d.latestVersion)}</span>` : ''}</td>
+      <td>${esc(d.currentFirmware || '')}${fw ? ` <span class="badge b-warn">→ ${esc(d.upgradeFirmware)}</span>` : ''}</td><td>${d.job && d.job.running && d.job.kind === 'update' ? '<span class="badge b-warn">wird aktualisiert</span>' : ''}</td></tr>`;
+  }).join('');
+  $('#auState').innerHTML = `<table><thead><tr><th>Gerät</th><th>RouterOS</th><th>Firmware</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+async function loadAuto(keepForm) {
+  try { renderAuto(await (await fetch('/api/auto-update', {cache: 'no-store'})).json(), keepForm); } catch (e) { $('#auMsg').textContent = 'Laden fehlgeschlagen: ' + e.message; }
+}
+$('#auSave').onclick = async () => {
+  const body = {enabled: $('#auEnabled').checked, time: $('#auTime').value, firmware: $('#auFirmware').checked,
+    days: [...document.querySelectorAll('#auDays [data-day]')].filter(i => i.checked).map(i => +i.dataset.day),
+    devices: [...document.querySelectorAll('#auDevices [data-adev]')].filter(i => i.checked).map(i => i.dataset.adev)};
+  try { renderAuto(await api('POST', '/api/auto-update', body)); flash('gespeichert'); } catch (e) { $('#auMsg').textContent = '❌ ' + e.message; }
+};
+$('#auRun').onclick = async () => {
+  const fw = auto && auto.firmware ? ' und RouterBOARD-Firmware' : '';
+  const which = auto && auto.devices && auto.devices.length ? 'ausgewählten' : 'allen';
+  if (!confirm(`Jetzt RouterOS${fw} auf ${which} Geräten aktualisieren (gespeicherte Einstellung)?\nGeräte mit Update starten dabei neu – nacheinander.`)) return;
+  try { renderAuto(await api('POST', '/api/auto-update/run', {}), true); load(); } catch (e) { $('#auMsg').textContent = '❌ ' + e.message; }
+};
 
 // --- WLAN im ganzen Netz ---
 async function netWlanDialog() {
@@ -721,6 +789,7 @@ $('#tiles').addEventListener('click', e => {
 function render() {
   renderJobs();
   if ($('#aDlg').open) renderAllClients();
+  if (!$('#tabAuto').hidden) { renderAutoState(); if (auto && auto.running) loadAuto(true); }
   const q = $('#q').value.toLowerCase();
   const ds = data.devices || [];
   const list = ds.filter(d => !q || JSON.stringify(d).toLowerCase().includes(q));
@@ -863,7 +932,7 @@ $('#pwDlg').onclose = async () => {
 loadMgr();
 $('#discBtn').onclick = async () => { await api('POST', '/api/discover'); flash('Suche läuft …'); setTimeout(load, 4000); };
 $('#q').oninput = render;
-load().then(loadCentral);
+load().then(() => { loadCentral(); loadAuto(); });
 // solange ein Job läuft, öfter aktualisieren
 (function tick() { setTimeout(() => load().finally(tick), (data.devices || []).some(busy) || (data.update || {}).busy ? 4000 : 15000); })();
 </script>

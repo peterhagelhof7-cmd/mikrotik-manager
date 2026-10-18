@@ -32,6 +32,7 @@ type Poller struct {
 	rediscover func()          // MNDP-Anfrage senden (nach IP-Wechsel)
 	ctx        context.Context // Dienst-Kontext für Hintergrund-Jobs
 	wc         clientCache     // WLAN-Clients je Gerät (nur im Speicher)
+	auto       autoUpdater     // Zustand der automatischen Updates
 }
 
 func newPoller(cfg Config, st *Store, v *Vault) *Poller {

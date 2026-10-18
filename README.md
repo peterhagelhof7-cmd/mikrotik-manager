@@ -7,7 +7,8 @@ Docker-Container (z. B. Synology).
 
 - **Übersicht:** Modell, RouterOS, Firmware, WLAN-Paket, Laufzeit, API-Status,
   WLAN-Clients je Gerät und über alle Geräte (SSID, Band, Signal, Rate)
-- **Updates:** RouterOS und RouterBOARD-Firmware, Neustart – nacheinander, mit Backup vorab
+- **Updates:** RouterOS und RouterBOARD-Firmware, Neustart – nacheinander, mit Backup vorab;
+  **automatisch zu einer festen Zeit** (Wochentage wählbar, Firmware per eigenem Haken)
 - **Backups** auf den Manager: jede Nacht, vor jeder Änderung und auf Knopfdruck
   (`.backup` + `.rsc`, Download in der Oberfläche)
 - **Grundeinstellungen:** Name, alle Ports in eine Bridge, DHCP-Client auf der Bridge,

@@ -266,6 +266,12 @@ func (p *Poller) startJobs(ctx context.Context, ids []string, kind string, fn fu
 }
 
 func (p *Poller) doUpdate(ctx context.Context, id string, x *Job) error {
+	return p.updateDevice(ctx, id, x, true)
+}
+
+// updateDevice: erst prüfen, ob es etwas zu tun gibt; nur dann Backup, RouterOS
+// und (wenn firmware) die RouterBOARD-Firmware.
+func (p *Poller) updateDevice(ctx context.Context, id string, x *Job, firmware bool) error {
 	d, _ := p.st.Get(id)
 	name := d.Identity
 	cl, err := p.session(ctx, id)
@@ -281,15 +287,7 @@ func (p *Poller) doUpdate(ctx context.Context, id string, x *Job) error {
 	}
 	p.jobs.step(x, name, "Stand: RouterOS %s, Firmware %s → %s", s.Version, s.CurrentFW, s.UpgradeFW)
 
-	// 1. Backup auf den Manager (Rückfallebene, falls nach dem Update etwas fehlt)
-	p.jobs.step(x, name, "erstelle Backup und lade es auf den Manager …")
-	bk, err := p.BackupToManager(ctx, id, cl, "vor-update")
-	if err != nil {
-		return fmt.Errorf("Backup: %w – Update abgebrochen, nichts geändert", err)
-	}
-	p.jobs.step(x, name, "Backup auf dem Manager gespeichert: %s", bk)
-
-	// 2. RouterOS
+	// 1. Gibt es etwas zu tun? (vor dem Backup: aktuelle Geräte bleiben unberührt)
 	p.jobs.step(x, name, "suche RouterOS-Update …")
 	if err := runIgnoringDisconnect(ctx, cl, 90*time.Second, "/system/package/update/check-for-updates"); err != nil {
 		return fmt.Errorf("Update-Prüfung: %w", err)
@@ -303,7 +301,27 @@ func (p *Poller) doUpdate(ctx context.Context, id string, x *Job) error {
 	if s.Latest == "" {
 		return fmt.Errorf("Update-Server nicht erreichbar (%s)", s.Status)
 	}
-	if s.Latest != s.Version {
+	rosUpd := s.Latest != s.Version
+	fwUpd := s.RB && s.CurrentFW != s.UpgradeFW
+	if !rosUpd && !(fwUpd && firmware) {
+		msg := fmt.Sprintf("RouterOS %s ist aktuell – nichts zu tun", s.Version)
+		if fwUpd {
+			msg = fmt.Sprintf("RouterOS %s ist aktuell; Firmware %s → %s ausstehend (Firmware-Updates nicht eingeschaltet)", s.Version, s.CurrentFW, s.UpgradeFW)
+		}
+		p.jobs.step(x, name, "%s", msg)
+		return nil
+	}
+
+	// 2. Backup auf den Manager (Rückfallebene, falls nach dem Update etwas fehlt)
+	p.jobs.step(x, name, "erstelle Backup und lade es auf den Manager …")
+	bk, err := p.BackupToManager(ctx, id, cl, "vor-update")
+	if err != nil {
+		return fmt.Errorf("Backup: %w – Update abgebrochen, nichts geändert", err)
+	}
+	p.jobs.step(x, name, "Backup auf dem Manager gespeichert: %s", bk)
+
+	// 3. RouterOS
+	if rosUpd {
 		p.jobs.step(x, name, "installiere RouterOS %s (bisher %s) – Download + Neustart …", s.Latest, s.Version)
 		target := s.Latest
 		if err := runIgnoringDisconnect(ctx, cl, 10*time.Minute, "/system/package/update/install"); err != nil {
@@ -318,7 +336,6 @@ func (p *Poller) doUpdate(ctx context.Context, id string, x *Job) error {
 			return fmt.Errorf("nach Neustart RouterOS %s statt %s", ns.Version, target)
 		}
 		p.jobs.step(x, name, "RouterOS %s läuft", ns.Version)
-		s = ns
 		if cl, err = p.session(ctx, id); err != nil {
 			return err
 		}
@@ -333,13 +350,17 @@ func (p *Poller) doUpdate(ctx context.Context, id string, x *Job) error {
 		p.jobs.step(x, name, "RouterOS %s ist aktuell", s.Version)
 	}
 
-	// 3. RouterBOARD-Firmware
+	// 4. RouterBOARD-Firmware
 	if !s.RB {
 		p.jobs.step(x, name, "kein RouterBOARD – keine Firmware")
 		return nil
 	}
 	if s.CurrentFW == s.UpgradeFW {
-		p.jobs.step(x, name, "Firmware %s ist aktuell – fertig", s.CurrentFW)
+		p.jobs.step(x, name, "fertig: RouterOS %s, Firmware %s ist aktuell", s.Version, s.CurrentFW)
+		return nil
+	}
+	if !firmware {
+		p.jobs.step(x, name, "fertig: RouterOS %s; Firmware %s → %s ausstehend (Firmware-Updates nicht eingeschaltet)", s.Version, s.CurrentFW, s.UpgradeFW)
 		return nil
 	}
 	target := s.UpgradeFW

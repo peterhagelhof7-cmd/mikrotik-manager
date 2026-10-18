@@ -99,6 +99,27 @@ Holt zuerst ein Backup auf den Manager, installiert dann eine neuere RouterOS-Ve
 Ein bis zwei Neustarts, je ca. 1–2 Minuten offline. Der Manager prüft nach jedem
 Neustart die erwartete Version.
 
+Gibt es weder ein neueres RouterOS noch neue Firmware, tut der Knopf nichts (kein
+Backup, kein Neustart).
+
+### Automatische Updates (Tab)
+
+Im Tab **Automatische Updates** legt man fest, **wann** aktualisiert wird:
+
+- **aktiviert**, **Uhrzeit** und **Wochentage** (z. B. sonntags 03:00),
+- **RouterBOARD-Firmware mit aktualisieren** – eigener Haken, weil die Firmware einen
+  zusätzlichen Neustart je Gerät kostet; ohne Haken wird nur RouterOS aktualisiert und
+  ausstehende Firmware lediglich angezeigt,
+- **Geräte** – keines gewählt = alle.
+
+Zum Termin prüft der Manager jedes Gerät und aktualisiert nur die mit Update – Gerät
+für Gerät, jeweils mit Backup vorab, so dass nie alle Access Points gleichzeitig weg
+sind. Läuft zur Startzeit noch etwas (z. B. das nächtliche Backup), wartet er.
+**Jetzt ausführen** startet den Lauf sofort. Der Tab zeigt den nächsten Termin, den
+Stand aller Geräte und das Ergebnis des letzten Laufs je Gerät.
+
+Tipp: nicht dieselbe Uhrzeit wie das nächtliche Backup (`BACKUP_TIME`, 04:00) wählen.
+
 ### Neustart
 
 Startet das Gerät neu und prüft, dass es wiederkommt.
@@ -277,6 +298,7 @@ Alle Einstellungen sind Umgebungsvariablen – bei systemd in
 | `backups/<Geräte-ID>/` | Backups – **enthalten Passwörter und WLAN-Schlüssel** |
 | `wlan-central.json` | zentrale WLAN-Konfiguration – **enthält WLAN-Passwörter** |
 | `migrations/` | Fortschritt laufender Umstellungen wireless → wifi |
+| `auto-update.json` | Einstellung und letztes Ergebnis der automatischen Updates |
 
 - Alle Dateien sind nur für den Dienst lesbar (0600/0700). Das Datenverzeichnis wie
   andere vertrauliche Daten sichern.

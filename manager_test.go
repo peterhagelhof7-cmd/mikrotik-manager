@@ -520,6 +520,58 @@ func TestCentralValidate(t *testing.T) {
 	}
 }
 
+func TestNextAutoAt(t *testing.T) {
+	loc, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Skip(err)
+	}
+	at := func(s string) time.Time {
+		v, _ := time.ParseInLocation("2006-01-02 15:04", s, loc)
+		return v
+	}
+	// 2026-10-18 ist ein Sonntag
+	for _, c := range []struct {
+		now  string
+		days []int
+		want string
+	}{
+		{"2026-10-18 02:00", []int{0}, "2026-10-18 03:00"},    // heute Sonntag, noch vor 03:00
+		{"2026-10-18 03:00", []int{0}, "2026-10-25 03:00"},    // genau zur Zeit → nächste Woche (Zeitumstellung)
+		{"2026-10-18 12:00", []int{3, 6}, "2026-10-21 03:00"}, // Mi oder Sa → Mittwoch
+		{"2026-10-18 12:00", []int{0, 1, 2, 3, 4, 5, 6}, "2026-10-19 03:00"},
+	} {
+		got, ok := nextAutoAt(at(c.now), "03:00", c.days)
+		if !ok || !got.Equal(at(c.want)) {
+			t.Errorf("%s %v: %v, erwartet %s", c.now, c.days, got, c.want)
+		}
+	}
+	if _, ok := nextAutoAt(time.Now(), "03:00", nil); ok {
+		t.Error("ohne Wochentag geplant")
+	}
+}
+
+func TestSaveAutoUpdate(t *testing.T) {
+	p := &Poller{cfg: Config{DataDir: t.TempDir()}, st: newStore(t.TempDir())}
+	if a := p.AutoUpdateCfg(); a.Enabled || a.Time != "03:00" {
+		t.Fatalf("Standard: %+v", a)
+	}
+	for _, bad := range []AutoUpdate{{Time: "25:00", Days: []int{1}}, {Time: "03:00"}, {Time: "03:00", Days: []int{7}}} {
+		if p.SaveAutoUpdate(bad) == nil {
+			t.Errorf("%+v zugelassen", bad)
+		}
+	}
+	if err := p.SaveAutoUpdate(AutoUpdate{Enabled: true, Time: "02:30", Days: []int{6, 0, 6}, Firmware: true, Devices: []string{"unbekannt"}}); err != nil {
+		t.Fatal(err)
+	}
+	a := p.AutoUpdateCfg()
+	if !a.Enabled || a.Time != "02:30" || len(a.Days) != 2 || a.Days[0] != 0 || !a.Firmware || len(a.Devices) != 0 {
+		t.Fatalf("%+v", a)
+	}
+	if v := p.AutoUpdateView(); v.Next.IsZero() {
+		t.Error("kein nächster Termin")
+	}
+}
+
 func TestNewerVersion(t *testing.T) {
 	for _, c := range []struct {
 		latest, current string

@@ -337,3 +337,18 @@ umstellen, die WLAN-Konfiguration wird dabei NICHT übernommen).
   als Release-Assets; Docker-Image wie bisher (`latest` nur für Releases).
 - Doku: `docs/admin-guide.md`, `docs/proxmox.md`, `docs/docker.md`,
   `synology/aufgabenplanung.sh` (DSM 7.0/7.1 ohne Compose).
+
+## 2026-10-18 – Automatische Updates (v0.13.0)
+
+- Eigener Tab: aktiviert, Uhrzeit, Wochentage, Haken „RouterBOARD-Firmware mit
+  aktualisieren“, Geräteauswahl (leer = alle); gespeichert in `auto-update.json`
+  (in der Oberfläche änderbar, nicht per Umgebungsvariable).
+- Lauf = `updateDevice(firmware)` je Gerät über die normale Job-Reihe (nacheinander).
+  **Update prüft jetzt zuerst** (check-for-updates) und macht Backup/Installation nur
+  bei echtem Update – gilt auch für den Update-Knopf. Ohne Firmware-Haken bleibt
+  ausstehende Firmware stehen und wird im Ergebnis genannt.
+- Planung: alle 30 s prüfen, ob seit dem letzten Blick ein Termin lag
+  (`nextAutoAt(letzter Blick)` ≤ jetzt) – geänderte Einstellungen gelten sofort,
+  DST-fest wie das nächtliche Backup. Läuft noch ein Job (Backup), bis 2 h warten.
+- Ergebnis je Gerät (letzter Schritt des Jobs) wird mit Zeitpunkt gespeichert und im
+  Tab angezeigt; „Jetzt ausführen“ startet einen Lauf von Hand.
