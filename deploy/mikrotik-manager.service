@@ -1,0 +1,29 @@
+[Unit]
+Description=mikrotik-manager – findet und verwaltet MikroTik-Geräte
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=mikrotik-manager
+Group=mikrotik-manager
+EnvironmentFile=-/etc/mikrotik-manager.env
+Environment=DATA_DIR=/var/lib/mikrotik-manager
+ExecStart=/opt/mikrotik-manager/mikrotik-manager
+Restart=always
+RestartSec=5
+StateDirectory=mikrotik-manager
+StateDirectoryMode=0700
+# Härtung: Der Dienst braucht nur Netz und sein Datenverzeichnis.
+NoNewPrivileges=yes
+ProtectSystem=strict
+# Programmverzeichnis beschreibbar: das Selbst-Update ersetzt das Programm
+ReadWritePaths=/opt/mikrotik-manager
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

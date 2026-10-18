@@ -1,0 +1,22 @@
+# mikrotik-manager – `docker-compose up -d` (Synology Docker-Paket per SSH) bzw. `docker compose up -d`
+services:
+  mikrotik-manager:
+    image: ghcr.io/peterhagelhof7-cmd/mikrotik-manager:latest
+    container_name: mikrotik-manager
+    # Host-Netz ist nötig: MNDP (UDP 5678) ist Broadcast und kommt nur im
+    # selben L2-Segment an.
+    network_mode: host
+    restart: unless-stopped
+    mem_limit: 128m
+    environment:
+      TZ: Europe/Berlin
+      LISTEN: ":8080"             # Port der Weboberfläche
+      # WEB_PASSWORD: ""          # leer = wird erzeugt, steht dann in /data/web-password.txt
+      # SCAN_CIDRS: "192.168.1.0/24"    # zusätzlich per API-Port-Scan suchen
+      # BACKUP_TIME: "04:00"     # tägliches Backup aller Geräte, "off" = aus
+      # API_TLS: "false"          # true = API-SSL (8729)
+    volumes:
+      - mikrotik-data:/data
+
+volumes:
+  mikrotik-data:

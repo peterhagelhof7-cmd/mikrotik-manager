@@ -1,0 +1,871 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MikroTik-Manager</title>
+<style>
+/* Farbschema wie home-central / shelly-watcher (dunkelblau, Karten). */
+:root{--bg:#101830;--card:#1b2440;--field:#0d1428;--line:#33406a;--acc:#3b6ef0;--link:#8ab4f8;--muted:#9aa4c0;--nav:#28345c;--fg:#eee;--ok:#3fb27f;--warn:#e0a030;--bad:#d9534f}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 16px;max-width:1600px;margin:0 auto}
+h1{font-size:20px;margin:0}h1 small{color:var(--muted);font-weight:400;font-size:12px;margin-left:6px}
+main{padding:0 16px 16px;max-width:1600px;margin:0 auto}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.tile{background:var(--card);border-radius:12px;padding:12px 14px}
+button.tile{text-align:left;color:var(--fg);width:100%}
+button.tile:hover{outline:1px solid var(--acc)}
+tr.sub td{border-bottom:1px solid var(--line);padding-top:0}
+.tile b{display:block;font-size:24px}.tile span{color:var(--link);font-size:13px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0 10px}
+input,button,select{font:inherit;font-size:14px;color:var(--fg);border-radius:8px;padding:8px 12px}
+input,select{background:var(--field);border:1px solid var(--line)}
+input[type=search]{flex:1;min-width:180px}
+button{cursor:pointer;border:0;background:var(--nav);color:var(--link)}
+button.primary{background:var(--acc);color:#fff}
+button.small{padding:3px 9px;font-size:12px}
+.wrap{overflow-x:auto;background:var(--card);border-radius:12px;padding:4px 8px}
+table{border-collapse:collapse;width:100%;white-space:nowrap}
+th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-weight:normal;font-size:13px;color:var(--muted)}
+tr:last-child td{border-bottom:0}
+tr.v6 td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
+.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}
+.mute{color:var(--muted)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+.on{background:var(--ok)}.off{background:var(--bad)}
+.badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;border:1px solid currentColor;margin-left:4px}
+.b-warn{color:var(--warn)}.b-bad{color:#f0a0a0}.b-ok{color:var(--ok)}.b-mute{color:var(--muted)}
+.card{background:var(--card);border-radius:12px;padding:14px 16px;margin:12px 0}
+.card h3{margin:0 0 8px;font-size:15px}
+.hint{color:var(--muted);font-size:12px}
+dialog{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:12px;max-width:420px;width:calc(100% - 32px)}
+dialog::backdrop{background:#0008}
+dialog label{display:block;margin:8px 0 4px;color:var(--muted)}
+dialog input,dialog select{width:100%}
+.wl input{width:170px}
+.wl select{width:auto}
+.btns{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
+#msg{color:var(--link);font-size:13px}
+a,a:visited{color:var(--link)}
+.tabs{display:flex;gap:4px;margin:14px 0 0;border-bottom:1px solid var(--line)}
+.tabs button{border-radius:8px 8px 0 0;background:transparent;color:var(--muted)}
+.tabs button.active{background:var(--card);color:var(--fg)}
+#tabDev,#tabCentral{padding-top:4px}
+footer{color:var(--muted);font-size:12px;padding:16px;text-align:center}
+/* Laufende Aktionen */
+#jobs{border:2px solid var(--warn)}
+#jobs.done{border-color:var(--line)}
+.jobline{display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--line)}
+.jobline:first-of-type{border-top:0}
+.spin{flex:none;width:14px;height:14px;margin-top:3px;border:2px solid var(--warn);border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.jobicon{flex:none;width:14px;text-align:center}
+@media (prefers-reduced-motion:reduce){.spin{animation:none;border-top-color:var(--warn)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>MikroTik-Manager <small id="ver"></small></h1>
+  <div class="bar" style="margin:0">
+    <button id="pwBtn" title="Öffnet einen Dialog: setzt für einen Benutzer (z. B. admin) auf ALLEN erreichbaren Geräten ein neues Passwort und prüft danach die Anmeldung damit. Den Benutzer, mit dem sich der Manager selbst anmeldet, lehnt die Funktion ab.">Benutzer-Passwort setzen</button>
+    <button id="netWlanBtn" title="Öffnet einen Dialog: ändert SSID, Passwort und/oder Verschlüsselung eines WLANs auf ALLEN Geräten, die es ausstrahlen – erst Vorschau, dann nacheinander je Gerät mit Backup und automatischem Zurückrollen.">WLAN im ganzen Netz</button>
+    <button id="credBtn" title="Öffnet einen Dialog für die Zugangsdaten, mit denen sich der Manager an Geräten ohne eigene Zugangsdaten anmeldet. Ändert nichts auf den Geräten.">Standard-Zugangsdaten</button>
+    <button class="primary" id="discBtn" title="Sendet sofort eine Suchanfrage ins Netz (MNDP) und liest alle bekannten Geräte neu aus. Ändert nichts auf den Geräten.">Jetzt suchen</button>
+  </div>
+</header>
+<main>
+  <div class="card" id="jobs" hidden aria-live="polite"><h3 id="jobsTitle"></h3><div id="jobsBody"></div></div>
+  <div class="card" id="results" hidden><h3 id="resTitle"></h3><div id="resBody"></div></div>
+  <div class="card" id="upd" hidden></div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="tabDev" class="active" title="Zeigt die Geräteliste mit Update, Neustart, Einstellungen, WLAN und Backups.">Geräte</button>
+    <button role="tab" data-tab="tabCentral" title="Zeigt die zentrale WLAN-Verwaltung: eine WLAN-Konfiguration, die auf allen ausgewählten Geräten gleich ausgerollt wird. Umschalten ändert nichts.">Zentrale WLAN-Verwaltung <span id="cBadge"></span></button>
+  </nav>
+  <div id="tabCentral" hidden>
+    <div class="card">
+      <h3>Zentrale WLAN-Verwaltung</h3>
+      <div class="hint">Eine WLAN-Konfiguration für alle ausgewählten Geräte. <b>Ausrollen</b> setzt auf jedem Gerät die vorhandene WLAN-Konfiguration zurück (virtuelle WLANs, WLAN-Profile, Werte an den Funkteilen) und baut sie nach dieser Vorgabe neu auf – nacheinander, je Gerät mit Backup auf dem Manager und einem Rückweg-Backup auf dem Gerät, das automatisch geladen wird, wenn die Prüfung danach scheitert. Speichern allein ändert nichts an den Geräten. Solange die Verwaltung aktiv ist, lässt sich das WLAN der ausgewählten Geräte nicht mehr einzeln ändern.</div>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="cEnabled" style="width:auto" title="Aktiviert die zentrale Verwaltung für die ausgewählten Geräte: Ausrollen wird möglich, Einzeländerungen am WLAN dieser Geräte werden gesperrt. Wird erst mit „Speichern“ übernommen; an den Geräten ändert sich dadurch noch nichts."><b>aktiviert</b></label>
+      <div class="hint" id="cUpdated"></div>
+    </div>
+    <div class="card">
+      <h3>Geräte</h3>
+      <div id="cDevices" class="hint"></div>
+    </div>
+    <div class="card">
+      <h3>WLANs</h3>
+      <div class="hint">Je Band trägt das Funkteil das erste passende WLAN, weitere werden virtuelle WLANs auf dem Funkteil. Alle hängen an der Bridge des Geräts; mit VLAN landen die Clients in diesem VLAN (auf den Ethernet-Ports getaggt, Verwaltung des Geräts bleibt ungetaggt). Für Roaming zwischen den Access Points SSID, Passwort und Verschlüsselung überall gleich lassen.</div>
+      <div class="wrap wl" style="margin-top:8px"><table><thead><tr><th>SSID</th><th>Passwort</th><th>Verschlüsselung</th><th>Bänder</th><th>VLAN</th><th>versteckt</th><th></th></tr></thead><tbody id="cNets"></tbody></table></div>
+      <div class="btns" style="justify-content:flex-start;align-items:center">
+        <button id="cAddNet" title="Fügt eine leere WLAN-Zeile hinzu (max. 8). Ändert nichts, erst „Speichern“ übernimmt.">+ WLAN</button>
+        <select id="cImportDev" style="width:auto" title="Gerät, dessen WLANs (SSID, Passwort, Verschlüsselung, Bänder) übernommen werden sollen."></select>
+        <button id="cImport" title="Liest die WLANs des gewählten Geräts und trägt sie hier ein (ersetzt die Liste). Ändert nichts an Geräten, erst „Speichern“ übernimmt.">von Gerät übernehmen</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Funk</h3>
+      <div class="wrap wl"><table><thead><tr><th>Band</th><th>an</th><th>Breite</th><th>Kanal</th><th>DFS-Kanäle</th></tr></thead><tbody id="cRadio"></tbody></table></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px"><label for="cCountry" style="margin:0">Land</label>
+        <select id="cCountry" style="width:auto" title="Land des Standorts für alle Geräte. Bestimmt die erlaubten Kanäle und die maximale Sendeleistung – muss dem tatsächlichen Standort entsprechen."></select>
+        <button id="cRec" title="Trägt die empfohlenen Funkwerte ein: Deutschland; 2,4 GHz 20 MHz mit Kanalplan 1/6/11 reihum; 5 GHz 80 MHz, Kanal automatisch ohne 10-Minuten-Radarkanäle; Verschlüsselung WPA2/WPA3. Ändert nichts, erst „Speichern“ übernimmt.">Empfehlung eintragen</button></div>
+    </div>
+    <div class="btns" style="justify-content:flex-start">
+      <button class="primary" id="cSave" title="Speichert die zentrale Konfiguration auf dem Manager und prüft danach jedes ausgewählte Gerät: entspricht es, oder was weicht ab? Ändert nichts an den Geräten.">Speichern &amp; prüfen</button>
+      <span id="cMsg" class="hint"></span>
+    </div>
+    <div class="card" id="cResult" hidden></div>
+  </div>
+  <div id="tabDev">
+  <div class="tiles" id="tiles"></div>
+  <div class="card" id="noCred" hidden>
+    <h3>Noch keine Standard-Zugangsdaten</h3>
+    <div class="hint">Ohne Zugangsdaten wird nur <span class="mono">admin</span> ohne Passwort versucht (Werkszustand älterer Geräte).
+      Lege einen Benutzer an, der auf allen Geräten gilt; abweichende Geräte bekommen eigene Zugangsdaten über „Login“ in der Zeile.</div>
+  </div>
+  <div class="card" id="mgr">
+    <h3>Verwaltungsbenutzer</h3>
+    <div id="mgrBody" class="hint">…</div>
+    <div class="btns" style="justify-content:flex-start"><button class="primary" id="mgrBtn" title="Legt auf allen erreichbaren Geräten den Benutzer mikrotik-manager (Gruppe full) an bzw. setzt sein Passwort neu, prüft die Anmeldung damit und verwendet ihn danach als Standard-Anmeldung. Kein Neustart.">Auf allen Geräten einrichten</button></div>
+  </div>
+  <div class="bar"><input type="search" id="q" placeholder="Filter (Name, IP, Modell, Version …)"><span id="msg"></span></div>
+  <div class="wrap"><table>
+    <thead><tr><th>Name</th><th>IP / MAC</th><th>Modell</th><th>RouterOS</th><th>Firmware</th><th>WLAN</th><th>Laufzeit</th><th>API</th><th>Aktion</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table></div>
+  </div>
+</main>
+<footer id="foot"></footer>
+
+<dialog id="dlg">
+  <form method="dialog" id="dlgForm">
+    <h3 id="dlgTitle" style="margin-top:0"></h3>
+    <div class="hint" id="dlgHint"></div>
+    <label for="cu">Benutzer</label><input id="cu" autocomplete="off" required>
+    <label for="cp">Passwort</label><input id="cp" type="password" autocomplete="new-password">
+    <div class="btns">
+      <button type="button" id="dlgDel" hidden title="Entfernt die eigenen Zugangsdaten dieses Geräts; danach gelten wieder die Standard-Zugangsdaten. Ändert nichts auf dem Gerät.">Eigene löschen</button>
+      <button value="cancel" formnovalidate title="Schließt den Dialog, nichts wird gespeichert.">Abbrechen</button>
+      <button class="primary" id="dlgOk" value="ok" title="Speichert die Zugangsdaten verschlüsselt im Manager und liest das Gerät damit neu aus. Ändert nichts auf dem Gerät.">Speichern</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="bDlg">
+  <h3 id="bTitle" style="margin-top:0"></h3>
+  <div class="hint">.backup = Binär-Backup zum Wiederherstellen (Datei aufs Gerät laden, dann System → Backup → Restore). .rsc = Text-Export der Konfiguration zum Nachlesen. Beide enthalten Passwörter/WLAN-Schlüssel. Es werden die letzten 20 Sicherungen je Gerät aufbewahrt.</div>
+  <div id="bBody" style="margin-top:10px"></div>
+  <div class="btns"><button type="button" onclick="this.closest('dialog').close()" title="Schließt die Liste.">Schließen</button></div>
+</dialog>
+
+<dialog id="sDlg" style="max-width:560px">
+  <h3 id="sTitle" style="margin-top:0"></h3>
+  <div class="card" style="margin:0 0 10px">
+    <h3>Name</h3>
+    <div style="display:flex;gap:8px"><input id="sName" maxlength="64" style="flex:1" title="Neuer Gerätename (Identity), nur ASCII, max. 64 Zeichen.">
+      <button class="primary" id="sNameBtn" title="Setzt den Gerätenamen (/system identity) sofort. Kein Neustart, keine Unterbrechung.">Name setzen</button></div>
+  </div>
+  <div class="card" style="margin:0 0 10px">
+    <h3>Alle Ports in eine Bridge</h3>
+    <div class="hint">Nimmt alle Ethernet- und WLAN-Schnittstellen in die Bridge auf; IP-Adressen und DHCP-Clients der Ports wandern mit. Wird verweigert, wenn auf dem Gerät ein DHCP-Server läuft (Router).</div>
+    <div class="btns" style="justify-content:flex-start"><button id="sBridgePrev" title="Zeigt, was geändert würde. Ändert nichts auf dem Gerät.">Vorschau</button></div>
+  </div>
+  <div class="card" style="margin:0 0 10px">
+    <h3>DHCP-Client auf der Bridge</h3>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--fg)"><input type="checkbox" id="sRemove" checked style="width:auto" title="Wenn angehakt, werden feste IP und feste Default-Route entfernt – aber erst, wenn eine DHCP-Adresse bezogen wurde.">feste IP + feste Default-Route entfernen (Gerät bekommt neue IP)</label>
+    <div class="btns" style="justify-content:flex-start"><button id="sDhcpPrev" title="Zeigt, was geändert würde. Ändert nichts auf dem Gerät.">Vorschau</button></div>
+  </div>
+  <div id="sPlan" class="card" style="margin:0" hidden></div>
+  <div class="btns"><button type="button" onclick="this.closest('dialog').close()" title="Schließt den Dialog, nichts wird geändert.">Schließen</button></div>
+</dialog>
+
+<dialog id="wDlg" style="max-width:1000px">
+  <h3 id="wTitle" style="margin-top:0"></h3>
+  <div class="hint">Werte ändern, dann „Vorschau“. Geändert wird erst mit „Jetzt ausführen“ – mit Backup und automatischem Zurückrollen. SSID bis 32 Zeichen, Passwort 8–63 Zeichen, jeweils nur ASCII (keine Umlaute).</div>
+  <div id="wBody" style="margin-top:10px">lese WLAN aus …</div>
+  <div id="wMig" class="card" style="margin:10px 0 0" hidden>
+    <h3>Umstellung auf das neue wifi-Paket</h3>
+    <div class="hint">Ersetzt das alte Paket wireless durch wifi-qcom-ac (nur für neuere Funkchips, z. B. cAP ac, hAP ac²) und übernimmt SSIDs, Passwörter, Schalter an/aus und die Bridge-Zuordnung. Zwei Neustarts, das WLAN dieses Geräts ist ca. 5 Minuten aus.</div>
+    <div class="btns" style="justify-content:flex-start"><button id="wMigPrev" title="Prüft, ob das Gerät umgestellt werden kann (Funkchip, freier Flash, Paket verfügbar), und zeigt, was übernommen wird. Ändert nichts auf dem Gerät.">Umstellung prüfen</button></div>
+  </div>
+  <div id="wPlan" class="card" style="margin:10px 0 0" hidden></div>
+  <div class="btns"><button type="button" onclick="this.closest('dialog').close()" title="Schließt den Dialog, nichts wird geändert.">Schließen</button></div>
+</dialog>
+
+<dialog id="aDlg" style="max-width:1100px">
+  <h3 style="margin-top:0">Alle WLAN-Verbindungen</h3>
+  <div class="hint" id="aSum"></div>
+  <div class="wrap" id="aBody" style="margin-top:10px"></div>
+  <div class="btns"><button type="button" id="aRefresh" title="Liest die WLAN-Verbindungen aller Geräte sofort neu (sonst jede Minute automatisch). Ändert nichts an den Geräten.">jetzt aktualisieren</button>
+    <button type="button" onclick="this.closest('dialog').close()" title="Schließt die Liste.">Schließen</button></div>
+</dialog>
+
+<dialog id="nDlg" style="max-width:720px">
+  <h3 style="margin-top:0">WLAN im ganzen Netz ändern</h3>
+  <div class="hint">Ändert SSID, Passwort und/oder Verschlüsselung auf allen Geräten, die das gewählte Netz ausstrahlen – nacheinander, je Gerät mit Backup und automatischem Zurückrollen. Damit WLAN-Geräte zwischen den Access Points wechseln können, sollten SSID und Passwort überall gleich sein.</div>
+  <div id="nList" class="hint" style="margin-top:8px"></div>
+  <label for="nSsid">Netz (SSID)</label><select id="nSsid" title="Das WLAN, das geändert werden soll. Betroffen sind alle Schnittstellen mit genau dieser SSID auf allen Geräten."></select>
+  <label for="nNew">Neue SSID (leer = unverändert)</label><input id="nNew" maxlength="32" autocomplete="off" title="Neuer Netzname. Leer lassen, wenn nur das Passwort geändert werden soll.">
+  <label for="nPass">Neues Passwort (leer = unverändert)</label><input id="nPass" maxlength="63" autocomplete="off" title="Neues WLAN-Passwort (8–63 Zeichen). Leer lassen, wenn nur die SSID geändert werden soll.">
+  <label for="nAuth">Verschlüsselung</label><select id="nAuth" title="Verschlüsselung auf allen betroffenen Geräten. Empfohlen: WPA2/WPA3. Geräte mit altem wireless-Paket können kein WPA3 und bekommen dabei WPA2."><option value="">unverändert</option><option value="wpa2-psk,wpa3-psk">WPA2/WPA3 (empfohlen)</option><option value="wpa3-psk">nur WPA3</option><option value="wpa2-psk">nur WPA2</option></select>
+  <div class="btns" style="justify-content:flex-start"><button class="primary" id="nPrev" title="Fragt jedes betroffene Gerät, was es ändern würde, und zeigt das Ergebnis. Ändert nichts auf den Geräten.">Vorschau</button></div>
+  <div id="nPlan" class="card" style="margin:10px 0 0" hidden></div>
+  <div class="btns"><button type="button" onclick="this.closest('dialog').close()" title="Schließt den Dialog, nichts wird geändert.">Schließen</button></div>
+</dialog>
+
+<dialog id="pwDlg">
+  <form method="dialog">
+    <h3 style="margin-top:0">Passwort eines Benutzers setzen</h3>
+    <div class="hint">Auf allen Geräten mit funktionierender API. Danach wird die Anmeldung damit geprüft.</div>
+    <label for="pu">Benutzer</label><input id="pu" value="admin" required>
+    <label for="pp">Neues Passwort</label><input id="pp" autocomplete="off" required>
+    <div class="btns"><button value="cancel" formnovalidate title="Schließt den Dialog, kein Passwort wird geändert.">Abbrechen</button><button class="primary" value="ok" title="Setzt das Passwort sofort auf ALLEN erreichbaren Geräten und prüft danach die Anmeldung. Kein Neustart.">Auf allen setzen</button></div>
+  </form>
+</dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let data = {devices: []};
+
+async function api(method, url, body) {
+  const r = await fetch(url, {method, headers: {'Content-Type': 'application/json'}, body: body ? JSON.stringify(body) : undefined});
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+function flash(t) { $('#msg').textContent = t; setTimeout(() => { if ($('#msg').textContent === t) $('#msg').textContent = ''; }, 4000); }
+
+function uptime(s) {
+  if (!s) return '';
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? `${d}d ${h}h` : `${h}h ${m}m`;
+}
+function ago(t) {
+  const s = (Date.now() - new Date(t)) / 1000;
+  if (s < 90) return 'gerade';
+  if (s < 5400) return Math.round(s / 60) + ' min';
+  if (s < 172800) return Math.round(s / 3600) + ' h';
+  return Math.round(s / 86400) + ' Tage';
+}
+const major = v => (v || '').split('.')[0];
+const online = d => (Date.now() - new Date(d.lastSeen)) < 15 * 60 * 1000;
+
+function row(d) {
+  const v = d.version || '';
+  const tags = [];
+  if (major(v) === '6') tags.push('<span class="badge b-warn" title="Migration auf RouterOS 7 ausstehend">v6</span>');
+  if (d.latestVersion && v && !v.startsWith(d.latestVersion)) tags.push(`<span class="badge b-warn">→ ${esc(d.latestVersion)}</span>`);
+  const fwUpd = d.currentFirmware && d.upgradeFirmware && d.currentFirmware !== d.upgradeFirmware;
+  const fw = d.routerboard ? esc(d.currentFirmware) + (fwUpd ? `<span class="badge b-warn">→ ${esc(d.upgradeFirmware)}</span>` : '') : (d.apiStatus === 'ok' ? '<span class="mute">kein RouterBOARD</span>' : '');
+  const st = {ok: '<span class="badge b-ok">ok</span>', auth: '<span class="badge b-bad">Login</span>', unreachable: '<span class="badge b-bad">nicht erreichbar</span>', error: '<span class="badge b-bad">Fehler</span>'}[d.apiStatus] || '<span class="badge b-mute">…</span>';
+  const credTag = d.hasOwnCred ? ' <span class="badge b-mute" title="eigene Zugangsdaten">eigene</span>' : '';
+  return `<tr class="${major(v) === '6' ? 'v6' : ''}">
+    <td><span class="dot ${online(d) ? 'on' : 'off'}" title="zuletzt gesehen: ${esc(ago(d.lastSeen))}"></span><b>${esc(d.identity || '—')}</b></td>
+    <td><a href="http://${esc(d.ip)}/" target="_blank" rel="noopener">${esc(d.ip)}</a><div class="mono mute">${esc(d.mac)}</div></td>
+    <td>${esc(d.model || d.board)}<div class="mono mute">${esc(d.arch)}${d.serial ? ' · ' + esc(d.serial) : ''}</div></td>
+    <td>${esc(v)}${tags.join('')}<div class="mono mute">${esc(d.channel)}</div></td>
+    <td>${fw}</td>
+    <td>${esc(d.wirelessPkg || '')}${central && central.enabled && (central.devices || []).includes(d.id) ? ' <span class="badge b-ok" title="WLAN wird zentral verwaltet (Tab „Zentrale WLAN-Verwaltung“).">zentral</span>' : ''}
+      ${d.wirelessPkg && d.wlanClients ? `<div><button class="small" data-clients="${esc(d.id)}" title="Klappt die WLAN-Verbindungen dieses Geräts auf bzw. zu (SSID, Band, Signal, Rate, Dauer, MAC, IP). Wird jede Minute aktualisiert. Ändert nichts.">${openClients.has(d.id) ? '▾' : '▸'} ${d.wlanClients.length} Client${d.wlanClients.length === 1 ? '' : 's'}</button>${d.wlanClientsError ? ` <span class="badge b-warn" title="${esc(d.wlanClientsError)}">alt</span>` : ''}</div>` : ''}</td>
+    <td>${uptime(d.uptime)}</td>
+    <td title="${esc(d.apiError)}">${st}${credTag}${d.apiError ? `<div class="hint">${esc(d.apiError)}</div>` : ''}</td>
+    <td>${jobCell(d)}</td>
+    <td><button class="small" data-upd="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Nach Rückfrage: speichert ein Backup auf dem Manager, installiert eine neuere RouterOS-Version (falls vorhanden) und danach die RouterBOARD-Firmware. Das Gerät startet dabei ein- bis zweimal neu (je ca. 1–2 Minuten offline).">Update</button> <button class="small" data-reboot="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Nach Rückfrage: startet das Gerät neu (ca. 1–2 Minuten offline) und prüft, dass es wieder erreichbar ist.">Neustart</button>
+      <button class="small" data-cred="${esc(d.id)}" title="Öffnet einen Dialog für eigene Zugangsdaten nur dieses Geräts. Ändert nichts auf dem Gerät.">Login</button> <button class="small" data-poll="${esc(d.id)}" title="Liest das Gerät sofort neu aus (Version, Firmware, Status). Ändert nichts auf dem Gerät.">↻</button>
+      <div style="margin-top:4px"><button class="small" data-set="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Öffnet die Einstellungen: Name setzen, alle Ports in die Bridge, DHCP-Client auf der Bridge (WLAN: eigener Knopf). Ändert erst nach Vorschau und ausdrücklichem Klick auf „Jetzt ausführen“.">Einstellungen</button> ${d.wirelessPkg ? `<button class="small" data-wlan="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Öffnet die WLAN-Übersicht dieses Geräts: SSID, Passwort und an/aus je Schnittstelle ändern; bei altem wireless-Paket zusätzlich die Umstellung auf das neue wifi-Paket. Ändert erst nach Vorschau und Klick auf „Jetzt ausführen“.">WLAN</button> ` : ''}<button class="small" data-backup="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Erstellt sofort ein Backup (Binär-Backup + Text-Export) und speichert es auf dem Manager. Die Kopie auf dem Gerät wird danach gelöscht. Kein Neustart, keine Änderung der Konfiguration.">Backup</button>
+      ${d.backups ? `<button class="small" data-blist="${esc(d.id)}" title="Zeigt die auf dem Manager gespeicherten Backups dieses Geräts zum Herunterladen.">${d.backups} Dateien · ${esc(ago(d.lastBackup))}</button>` : '<span class="hint">kein Backup</span>'}</div></td>
+  </tr>`;
+}
+
+const busy = d => d.job && d.job.running;
+const kindName = k => ({update: 'Update', reboot: 'Neustart', backup: 'Backup', bridge: 'Bridge', dhcp: 'DHCP-Client', wlan: 'WLAN', wifimigrate: 'Umstellung wifi'})[k] || k;
+
+// Einstellungen: Name direkt; Bridge/DHCP erst Vorschau, dann Ausführen mit Rückroll-Wächter.
+function settingsDialog(d) {
+  $('#sTitle').textContent = `Einstellungen: ${d.identity}`;
+  $('#sName').value = d.identity || '';
+  $('#sPlan').hidden = true;
+  $('#sNameBtn').onclick = async () => {
+    const r = await api('POST', `/api/devices/${encodeURIComponent(d.id)}/identity`, {name: $('#sName').value});
+    showPlanMsg(r.ok ? '✅ ' + r.msg : '❌ ' + r.msg); if (r.ok) load();
+  };
+  const preview = async (action) => {
+    const req = {action, removeStatic: action === 'dhcp' && $('#sRemove').checked};
+    const title = action === 'bridge' ? 'Alle Ports in Bridge' : 'DHCP-Client auf Bridge';
+    previewChange($('#sPlan'), $('#sDlg'), d, title, req);
+  };
+  $('#sBridgePrev').onclick = () => preview('bridge');
+  $('#sDhcpPrev').onclick = () => preview('dhcp');
+  $('#sDlg').showModal();
+}
+function showPlanMsg(t) { boxMsg($('#sPlan'), t); }
+function boxMsg(box, t) { box.innerHTML = esc(t); box.hidden = false; }
+
+// Vorschau einer Änderung in box; „Jetzt ausführen“ startet sie als Job und schließt dlg.
+async function previewChange(box, dlg, d, title, req, waitText) {
+  boxMsg(box, waitText || 'lese Gerät aus …');
+  let p;
+  try { p = await api('POST', `/api/devices/${encodeURIComponent(d.id)}/plan`, req); }
+  catch (e) { boxMsg(box, '❌ ' + e.message); return; }
+  const mig = req.action === 'wifimigrate';
+  let h = `<h3>Vorschau: ${esc(title)}</h3>` + planList(p);
+  if (!p.blocked && !p.noop) h += `<div class="hint" style="margin-top:6px">${mig
+      ? 'Vorher wird ein Backup auf den Manager geholt. Scheitert die Paket-Installation, wird wireless wieder installiert und das Backup eingespielt.'
+      : 'Vorher wird ein Backup auf den Manager geholt. Bestätigt der Manager die Änderung nicht innerhalb von 5 Minuten, stellt das Gerät den alten Zustand selbst wieder her.'}</div>
+    <div class="btns" style="justify-content:flex-start"><button class="primary" data-run title="${mig
+      ? 'Startet die Umstellung: Backup, wireless deinstallieren (Neustart), wifi-qcom-ac installieren (Neustart), WLAN-Konfiguration einspielen und prüfen. Das WLAN dieses Geräts ist ca. 5 Minuten aus.'
+      : 'Führt genau diese Änderungen auf dem Gerät aus (mit Backup und automatischem Zurückrollen, falls der Manager das Gerät danach nicht mehr erreicht).'}">Jetzt ausführen</button></div>`;
+  box.innerHTML = h; box.hidden = false;
+  const run = box.querySelector('[data-run]');
+  if (run) run.onclick = async () => {
+    if (mig && !confirm(`${d.identity}: jetzt auf das wifi-Paket umstellen?\nZwei Neustarts, das WLAN dieses Geräts ist ca. 5 Minuten aus.`)) return;
+    run.disabled = true;
+    try {
+      const r = await api('POST', `/api/devices/${encodeURIComponent(d.id)}/change`, req);
+      if (r.ok) { dlg.close(); flash(`${title} läuft – Status oben`); load(); }
+      else { boxMsg(box, '❌ ' + r.msg); }
+    } catch (e) { boxMsg(box, '❌ ' + e.message); }
+  };
+}
+function planList(p) {
+  let h = `<ul style="margin:0 0 8px;padding-left:18px">${(p.steps || []).map(s => `<li style="white-space:normal">${esc(s)}</li>`).join('')}</ul>`;
+  if (p.warn && p.warn.length) h += p.warn.map(w => `<div class="hint" style="color:var(--warn)">⚠ ${esc(w)}</div>`).join('');
+  if (p.blocked) h += `<div style="color:#f0a0a0;margin-top:6px">⛔ ${esc(p.blocked)}</div>`;
+  return h;
+}
+
+// --- WLAN eines Geräts ---
+async function wlanDialog(d) {
+  $('#wTitle').textContent = `WLAN: ${d.identity}`;
+  $('#wBody').textContent = 'lese WLAN aus …';
+  $('#wMig').hidden = true; $('#wPlan').hidden = true;
+  $('#wDlg').showModal();
+  let info;
+  try { info = await (async () => { const r = await fetch(`/api/devices/${encodeURIComponent(d.id)}/wlan`, {cache: 'no-store'}); if (!r.ok) throw new Error(await r.text()); return r.json(); })(); }
+  catch (e) { $('#wBody').textContent = '❌ ' + e.message; return; }
+  if (!info.pkg) { $('#wBody').textContent = 'Das Gerät hat keine WLAN-Schnittstellen.'; return; }
+  const pkgName = (info.pkg === 'wireless' ? 'altes Paket wireless' : 'neues Paket wifi')
+    + (central && central.enabled && (central.devices || []).includes(d.id) ? ' · <span style="color:var(--warn)">⚠ wird zentral verwaltet – Änderungen hier werden abgelehnt, bitte im Tab „Zentrale WLAN-Verwaltung“</span>' : '');
+  $('#wBody').innerHTML = `<div class="hint">${pkgName}</div><div class="wrap wl"><table><thead><tr><th>Schnittstelle</th><th>Band</th><th>SSID</th><th>Passwort</th><th>Verschlüsselung</th><th>An</th><th>Status</th></tr></thead><tbody>${info.interfaces.map(x => `<tr data-if="${esc(x.name)}">
+      <td><b>${esc(x.name)}</b><div class="hint">${x.master ? 'virtuell an ' + esc(x.master) : esc(x.chip || 'Funkteil')}</div></td>
+      <td>${esc(x.band)}</td>
+      <td><input data-f="ssid" value="${esc(x.ssid)}" maxlength="32" autocomplete="off" title="Netzname (SSID) dieser Schnittstelle. Wird erst nach Vorschau und „Jetzt ausführen“ geändert."></td>
+      <td><input data-f="pass" type="password" value="${esc(x.passphrase)}" maxlength="63" autocomplete="off" title="WLAN-Passwort dieser Schnittstelle (8–63 Zeichen). Wird erst nach Vorschau und „Jetzt ausführen“ geändert."> <button class="small" type="button" data-show title="Zeigt das Passwort im Klartext bzw. verbirgt es wieder. Ändert nichts.">👁</button>
+        ${x.profile ? `<div class="hint">Profil ${esc(x.profile)}</div>` : ''}</td>
+      <td>${authSelect(info.auths || [], x.auth)}</td>
+      <td><input data-f="on" type="checkbox" ${x.disabled ? '' : 'checked'} style="width:auto" title="Haken = Schnittstelle eingeschaltet, ohne Haken = ausgeschaltet (sendet nicht). Wird erst nach Vorschau und „Jetzt ausführen“ geändert."></td>
+      <td>${x.disabled ? '<span class="badge b-mute">aus</span>' : '<span class="badge b-ok">an</span>'} ${x.clients} Clients
+        <div class="hint">${x.bridge ? 'an ' + esc(x.bridge) : '<span style="color:var(--warn)">⚠ an keiner Bridge</span>'}</div></td></tr>`).join('')}</tbody></table></div>
+    <h3 style="margin:14px 0 6px">Funk</h3>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><label for="wCountry" style="margin:0">Land</label>
+      <select id="wCountry" style="width:auto" title="Land des Standorts. Bestimmt die erlaubten Kanäle und die maximale Sendeleistung – muss dem tatsächlichen Standort entsprechen. Gilt für alle Funkteile des Geräts.">${countryOpts(info.country)}</select>
+      <button class="small" type="button" id="wRec" title="Trägt die empfohlenen Werte in die Felder ein (Verschlüsselung WPA2/WPA3 bzw. WPA2 beim alten wireless-Paket; Land Deutschland; 2,4 GHz: 20 MHz auf Kanal 1, 6 oder 11 – je Gerät verteilt; 5 GHz: 80 MHz, Kanal automatisch ohne 10-Minuten-Radarkanäle). Ändert noch nichts – erst Vorschau, dann ausführen.">Empfehlung eintragen</button></div>
+    <div class="hint" id="wRecHint" hidden style="margin-top:6px"></div>
+    <div class="wrap wl" style="margin-top:8px"><table><thead><tr><th>Funkteil</th><th>Band</th><th>Breite</th><th>Kanal</th><th>DFS-Kanäle</th><th>sendet gerade</th></tr></thead><tbody>${info.interfaces.filter(x => x.radio).map(x => radioRow(info.pkg, x)).join('')}</tbody></table></div>
+    <div class="btns" style="justify-content:flex-start"><button class="primary" id="wPrev" title="Zeigt, was mit den geänderten Werten (WLAN-Tabelle, Funk, Land) auf dem Gerät geändert würde. Ändert nichts auf dem Gerät.">Vorschau</button></div>`;
+  $('#wRec').onclick = () => {
+    const ch = recommendChannel2(d);
+    $('#wCountry').value = 'germany';
+    const best = (info.auths || []).includes('wpa2-psk,wpa3-psk') ? 'wpa2-psk,wpa3-psk' : 'wpa2-psk';
+    $('#wBody').querySelectorAll('[data-f=auth]').forEach(s => { if ([...s.options].some(o => o.value === best)) s.value = best; });
+    for (const x of info.interfaces.filter(x => x.radio)) {
+      const tr = $('#wBody').querySelector(`tr[data-radio="${CSS.escape(x.name)}"]`);
+      const is5 = x.band === '5 GHz';
+      const pick = (sel, prefs) => { const s = tr.querySelector(sel); const v = prefs.find(p => [...s.options].some(o => o.value === p)); if (v !== undefined) s.value = v; };
+      pick('[data-r=band]', is5 ? ['5ghz-ax', '5ghz-ac', '5ghz-a/n/ac', '5ghz-n'] : ['2ghz-ax', '2ghz-n', '2ghz-b/g/n']);
+      pick('[data-r=width]', is5 ? ['80', '40', '20'] : ['20']);
+      pick('[data-r=freq]', is5 ? ['auto'] : [String(ch)]);
+      if (is5) pick('[data-r=dfs]', ['10min-cac']);
+    }
+    $('#wRecHint').hidden = false;
+    $('#wRecHint').innerHTML = `Empfehlung eingetragen (noch nichts geändert): <b>Land Deutschland</b> (erlaubte Kanäle/Sendeleistung). <b>2,4 GHz: 20 MHz auf Kanal ${(ch - 2407) / 5}</b> – nur die Kanäle 1, 6 und 11 überlappen sich nicht, sie werden reihum auf die Geräte verteilt; 40 MHz stört bei mehreren Access Points mehr als es bringt. <b>5 GHz: 80 MHz, Kanal automatisch</b>, aber ohne die Wetterradar-Kanäle 120–128 (sonst bis zu 10 Minuten Funkstille nach Neustart/Radar). Band jeweils der neueste Standard, den das Funkteil kann, ältere Geräte können sich trotzdem verbinden. <b>Verschlüsselung ${best === 'wpa2-psk,wpa3-psk' ? 'WPA2/WPA3' : 'WPA2'}</b>${best === 'wpa2-psk,wpa3-psk' ? ' – neue Geräte nutzen WPA3, ältere weiter WPA2; überall gleich, damit Geräte zwischen den Access Points wechseln können' : ' – das alte wireless-Paket kann kein WPA3'}.`;
+  };
+  $('#wBody').querySelectorAll('[data-show]').forEach(b => b.onclick = () => { const i = b.previousElementSibling; i.type = i.type === 'password' ? 'text' : 'password'; });
+  $('#wPrev').onclick = () => {
+    const edits = [];
+    for (const x of info.interfaces) {
+      const tr = $('#wBody').querySelector(`tr[data-if="${CSS.escape(x.name)}"]`);
+      const e = {name: x.name};
+      const ssid = tr.querySelector('[data-f=ssid]').value, pass = tr.querySelector('[data-f=pass]').value, dis = !tr.querySelector('[data-f=on]').checked;
+      const auth = tr.querySelector('[data-f=auth]').value;
+      if (auth !== normAuth(x.auth)) e.auth = auth;
+      if (ssid !== x.ssid) e.ssid = ssid;
+      if (pass !== x.passphrase) e.passphrase = pass;
+      if (dis !== x.disabled) e.disabled = dis;
+      const rt = x.radio && $('#wBody').querySelector(`tr[data-radio="${CSS.escape(x.name)}"]`);
+      if (rt) {
+        const r = {};
+        for (const [k, sel, cur] of [['band', 'band', x.radio.band], ['width', 'width', x.radio.width], ['freq', 'freq', x.radio.freq], ['skipDfs', 'dfs', x.radio.skipDfs]]) {
+          const s = rt.querySelector(`[data-r=${sel}]`);
+          if (s && s.value !== (cur || '')) r[k] = s.value;
+        }
+        if (Object.keys(r).length) e.radio = r;
+      }
+      if (Object.keys(e).length > 1) edits.push(e);
+    }
+    const req = {action: 'wlan', wlan: edits};
+    if ($('#wCountry').value !== (info.country || '')) req.country = $('#wCountry').value;
+    if (!edits.length && !req.country) { boxMsg($('#wPlan'), 'Nichts geändert – erst Werte in den Tabellen ändern.'); return; }
+    previewChange($('#wPlan'), $('#wDlg'), d, 'WLAN ändern', req);
+  };
+  $('#wMig').hidden = info.pkg !== 'wireless';
+  $('#wMigPrev').onclick = () => previewChange($('#wPlan'), $('#wDlg'), d, 'Umstellung auf wifi-Paket', {action: 'wifimigrate'}, 'prüfe Gerät und Paketangebot … (kann bis zu einer Minute dauern)');
+}
+
+// Verschlüsselung
+const normAuth = a => (a || '').split(',').map(x => x.trim()).filter(Boolean).sort().join(',');
+const AUTH_NAMES = {'wpa2-psk,wpa3-psk': 'WPA2/WPA3', 'wpa3-psk': 'nur WPA3', 'wpa2-psk': 'WPA2', 'wpa-psk,wpa2-psk': 'WPA/WPA2 (alt)', '': 'offen'};
+function authSelect(opts, cur) {
+  cur = normAuth(cur);
+  const list = opts.includes(cur) ? opts : [cur, ...opts];
+  return `<select data-f="auth" title="Verschlüsselung dieses WLANs. Empfohlen: WPA2/WPA3 – neue Geräte nutzen WPA3, ältere weiter WPA2. „nur WPA3“ sperrt ältere Geräte aus. Das alte wireless-Paket kann kein WPA3.">${list.map(v => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(AUTH_NAMES[v] || v.toUpperCase())}${v === 'wpa2-psk,wpa3-psk' ? ' (empfohlen)' : ''}</option>`).join('')}</select>${cur === '' ? '<div class="hint" style="color:var(--warn)">offenes Netz</div>' : ''}`;
+}
+
+// Funkwerte
+const COUNTRIES = ['germany', 'austria', 'switzerland', 'netherlands', 'belgium', 'luxembourg', 'france', 'italy', 'spain', 'poland', 'czech republic', 'denmark', 'united kingdom', 'united states'];
+const cap = s => s.replace(/\b[a-z]/g, c => c.toUpperCase());
+function countryOpts(cur) {
+  const l = COUNTRIES.includes(cur) || !cur ? COUNTRIES : [cur, ...COUNTRIES];
+  return (cur ? '' : '<option value="" selected>– nicht gesetzt –</option>') + l.map(c => `<option value="${esc(c)}" ${c === cur ? 'selected' : ''}>${esc(cap(c))}</option>`).join('');
+}
+function chLabel(f) {
+  const n = +f; if (!n) return 'automatisch';
+  const ch = n < 3000 ? (n - 2407) / 5 : (n - 5000) / 5;
+  const dfs = n >= 5260 && n <= 5720 ? (n >= 5600 && n <= 5650 ? ', DFS 10 min' : ', DFS') : '';
+  return `${ch} (${n} MHz${dfs})`;
+}
+function radioRow(pkg, x) {
+  const r = x.radio, std = pkg === 'wifi';
+  const sel = (key, cur, vals, label, title, allowStd = std) => {
+    const list = (allowStd ? [''] : []).concat(vals);
+    if (!list.includes(cur)) list.unshift(cur);
+    return `<select data-r="${key}" title="${title}">${list.map(v => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(v === '' ? 'Standard' : label(v))}</option>`).join('')}</select>`;
+  };
+  const is5 = x.band === '5 GHz';
+  return `<tr data-radio="${esc(x.name)}"><td><b>${esc(x.name)}</b><div class="hint">${esc(x.band)} · ${esc(x.chip || '')}</div></td>
+    <td>${sel('band', r.band || '', r.bands || [], v => v, 'Funkstandard. Gemischte Bänder (z. B. b/g/n, a/n/ac) lassen auch ältere Geräte zu. Standard = das Gerät wählt.')}</td>
+    <td>${sel('width', r.width || '', r.widths || [], v => v + ' MHz', 'Kanalbreite: breiter = schneller, aber störanfälliger und weniger freie Kanäle. Empfohlen: 2,4 GHz 20 MHz, 5 GHz 80 MHz.')}</td>
+    <td>${sel('freq', r.freq || 'auto', ['auto', ...(r.channels || []).map(String)], chLabel, 'Kanal: automatisch = das Gerät sucht beim Start den freiesten. Fest = gezielte Verteilung auf mehrere Access Points (2,4 GHz: nur 1, 6, 11 überlappen nicht). DFS-Kanäle prüfen vor dem Senden 1 bzw. 10 Minuten auf Radar.', false)}</td>
+    <td>${is5 ? sel('dfs', r.skipDfs || '', ['disabled', '10min-cac', 'all'], v => ({disabled: 'alle erlaubt', '10min-cac': 'ohne 10-min-Radarkanäle', all: 'keine DFS-Kanäle'})[v] || v, 'Welche DFS-Kanäle die automatische Kanalwahl auslässt. Empfohlen: ohne 10-min-Radarkanäle (Wetterradar 120–128).') : '<span class="mute">–</span>'}</td>
+    <td class="mono">${esc(r.current || (x.disabled ? 'aus' : ''))}${r.profile ? `<div class="hint" style="color:var(--warn)">Kanalprofil ${esc(r.profile)} – hier nicht änderbar</div>` : ''}</td></tr>`;
+}
+// 2,4-GHz-Kanalplan: 1/6/11 reihum über alle Geräte mit WLAN (nach Name sortiert)
+function recommendChannel2(d) {
+  const devs = (data.devices || []).filter(x => x.wirelessPkg).sort((a, b) => (a.identity || '').localeCompare(b.identity || ''));
+  const i = Math.max(0, devs.findIndex(x => x.id === d.id));
+  return [2412, 2437, 2462][i % 3];
+}
+
+// --- Zentrale WLAN-Verwaltung ---
+let central = null;
+const BANDS = {both: 'beide', '2': 'nur 2,4 GHz', '5': 'nur 5 GHz'};
+const CAUTH = ['wpa2-psk,wpa3-psk', 'wpa3-psk', 'wpa2-psk'];
+const CH2 = [2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, 2467, 2472];
+const CH5 = [5180, 5200, 5220, 5240, 5260, 5280, 5300, 5320, 5500, 5520, 5540, 5560, 5580, 5600, 5620, 5640, 5660, 5680, 5700];
+const opt = (v, cur, label) => `<option value="${esc(v)}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(label)}</option>`;
+const wlanDevs = () => (data.devices || []).filter(d => d.wirelessPkg).sort((a, b) => (a.identity || '').localeCompare(b.identity || ''));
+
+function netRow(n) {
+  return `<tr data-net><td><input data-c="ssid" value="${esc(n.ssid)}" maxlength="32" autocomplete="off" title="Netzname (SSID), bis 32 Zeichen, nur ASCII."></td>
+    <td><input data-c="pass" type="password" value="${esc(n.passphrase)}" maxlength="63" autocomplete="off" title="WLAN-Passwort, 8–63 Zeichen, nur ASCII."> <button class="small" type="button" data-show title="Zeigt das Passwort im Klartext bzw. verbirgt es wieder. Ändert nichts.">👁</button></td>
+    <td><select data-c="auth" title="Verschlüsselung. Empfohlen: WPA2/WPA3 – neue Geräte nutzen WPA3, ältere weiter WPA2. Geräte mit altem wireless-Paket können kein WPA3 und bekommen WPA2.">${CAUTH.map(a => opt(a, normAuth(n.auth) || CAUTH[0], AUTH_NAMES[a] + (a === CAUTH[0] ? ' (empfohlen)' : ''))).join('')}</select></td>
+    <td><select data-c="bands" title="Auf welchen Bändern dieses WLAN ausgestrahlt wird.">${Object.entries(BANDS).map(([v, l]) => opt(v, n.bands || 'both', l)).join('')}</select></td>
+    <td><input data-c="vlan" type="number" min="2" max="4094" value="${n.vlan || ''}" placeholder="–" style="width:80px" title="VLAN-ID für die Clients dieses WLANs (2–4094). Leer = kein VLAN, Clients landen im normalen Netz der Bridge. Mit VLAN läuft es auf den Ethernet-Ports des Geräts getaggt – der Switch-Port muss das VLAN getaggt durchreichen."></td>
+    <td><input data-c="hidden" type="checkbox" ${n.hidden ? 'checked' : ''} style="width:auto" title="Haken = SSID wird nicht ausgestrahlt (verstecktes Netz). Bringt kaum Sicherheit, erschwert aber das Verbinden."></td>
+    <td><button class="small" type="button" data-del title="Entfernt dieses WLAN aus der Liste. Ändert nichts, erst „Speichern“ übernimmt.">entfernen</button></td></tr>`;
+}
+function centralRadioRow(key, label, r, is5) {
+  const chans = (is5 ? [] : [['plan', 'Kanalplan 1/6/11 reihum (empfohlen)']])
+    .concat([['auto', 'automatisch' + (is5 ? ' (empfohlen)' : '')]], (is5 ? CH5 : CH2).map(c => [String(c), chLabel(c)]));
+  return `<tr data-radio="${key}"><td><b>${label}</b></td>
+    <td><input type="checkbox" data-c="on" ${r.enabled ? 'checked' : ''} style="width:auto" title="Haken = dieses Band senden. Ohne Haken werden die Funkteile dieses Bands auf allen Geräten ausgeschaltet."></td>
+    <td><select data-c="width" title="Kanalbreite: breiter = schneller, aber störanfälliger. Empfohlen: 2,4 GHz 20 MHz, 5 GHz 80 MHz.">${(is5 ? ['20', '40', '80'] : ['20', '40']).map(w => opt(w, r.width, w + ' MHz')).join('')}</select></td>
+    <td><select data-c="channel" title="${is5 ? 'Kanal: automatisch = jedes Gerät sucht beim Start den freiesten (empfohlen). Fest = alle Geräte auf demselben Kanal.' : 'Kanalplan: die Geräte bekommen reihum (nach Name sortiert) Kanal 1, 6 und 11 – die einzigen, die sich nicht überlappen. Automatisch = jedes Gerät sucht selbst. Fest = alle Geräte auf demselben Kanal.'}">${chans.map(([v, l]) => opt(v, r.channel, l)).join('')}</select></td>
+    <td>${is5 ? `<select data-c="dfs" title="Welche DFS-Kanäle die automatische Kanalwahl auslässt. Empfohlen: ohne 10-min-Radarkanäle (Wetterradar 120–128).">${[['disabled', 'alle erlaubt'], ['10min-cac', 'ohne 10-min-Radarkanäle (empfohlen)'], ['all', 'keine DFS-Kanäle']].map(([v, l]) => opt(v, r.skipDfs, l)).join('')}</select>` : '<span class="mute">–</span>'}</td></tr>`;
+}
+function renderCentral(c) {
+  $('#cEnabled').checked = !!c.enabled;
+  $('#cUpdated').textContent = c.updated && !c.updated.startsWith('0001') ? 'zuletzt gespeichert: ' + new Date(c.updated).toLocaleString('de-DE') : 'noch nicht gespeichert – die Werte unten sind die Empfehlung';
+  const devs = wlanDevs();
+  $('#cDevices').innerHTML = devs.map(d => `<label style="display:flex;gap:8px;align-items:center;color:var(--fg);margin:4px 0"><input type="checkbox" data-dev="${esc(d.id)}" ${(c.devices || []).includes(d.id) ? 'checked' : ''} style="width:auto" title="Haken = dieses Gerät wird zentral verwaltet und beim Ausrollen neu konfiguriert.">
+    <b>${esc(d.identity)}</b> <span class="mute">${esc(d.model || d.board)} · ${esc(d.ip)}</span>${d.wirelessPkg === 'wireless' ? ' <span class="badge b-warn" title="Altes wireless-Paket: kein WPA3, bekommt WPA2.">wireless – nur WPA2</span>' : ''}</label>`).join('') || 'keine Geräte mit WLAN';
+  $('#cNets').innerHTML = (c.networks || []).map(netRow).join('');
+  $('#cRadio').innerHTML = centralRadioRow('radio2', '2,4 GHz', c.radio2, false) + centralRadioRow('radio5', '5 GHz', c.radio5, true);
+  $('#cCountry').innerHTML = countryOpts(c.country);
+  $('#cImportDev').innerHTML = devs.map(d => opt(d.id, '', d.identity)).join('');
+  $('#cBadge').innerHTML = c.enabled ? '<span class="badge b-ok">aktiv</span>' : '';
+}
+function collectCentral() {
+  const radio = key => {
+    const tr = $(`#cRadio tr[data-radio=${key}]`);
+    const dfs = tr.querySelector('[data-c=dfs]');
+    return {enabled: tr.querySelector('[data-c=on]').checked, width: tr.querySelector('[data-c=width]').value, channel: tr.querySelector('[data-c=channel]').value, skipDfs: dfs ? dfs.value : ''};
+  };
+  return {
+    enabled: $('#cEnabled').checked,
+    devices: [...document.querySelectorAll('#cDevices [data-dev]')].filter(i => i.checked).map(i => i.dataset.dev),
+    country: $('#cCountry').value,
+    networks: [...document.querySelectorAll('#cNets tr[data-net]')].map(tr => ({
+      ssid: tr.querySelector('[data-c=ssid]').value.trim(), passphrase: tr.querySelector('[data-c=pass]').value,
+      auth: tr.querySelector('[data-c=auth]').value, bands: tr.querySelector('[data-c=bands]').value, hidden: tr.querySelector('[data-c=hidden]').checked,
+      vlan: parseInt(tr.querySelector('[data-c=vlan]').value, 10) || 0})),
+    radio2: radio('radio2'), radio5: radio('radio5'),
+  };
+}
+async function loadCentral() {
+  try { central = await (await fetch('/api/central', {cache: 'no-store'})).json(); renderCentral(central); }
+  catch (e) { $('#cMsg').textContent = 'Laden fehlgeschlagen: ' + e.message; }
+}
+$('#cNets').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.del !== undefined) b.closest('tr').remove();
+  if (b.dataset.show !== undefined) { const i = b.previousElementSibling; i.type = i.type === 'password' ? 'text' : 'password'; }
+});
+$('#cAddNet').onclick = () => {
+  if (document.querySelectorAll('#cNets tr').length >= 8) { $('#cMsg').textContent = 'höchstens 8 WLANs'; return; }
+  $('#cNets').insertAdjacentHTML('beforeend', netRow({ssid: '', passphrase: '', auth: CAUTH[0], bands: 'both'}));
+};
+$('#cImport').onclick = async () => {
+  const id = $('#cImportDev').value; if (!id) return;
+  $('#cMsg').textContent = 'lese WLAN des Geräts …';
+  try {
+    const r = await fetch(`/api/devices/${encodeURIComponent(id)}/wlan`, {cache: 'no-store'});
+    if (!r.ok) throw new Error(await r.text());
+    const info = await r.json(), nets = {};
+    for (const x of info.interfaces) {
+      if (!x.ssid || x.disabled) continue;
+      const n = nets[x.ssid] ||= {ssid: x.ssid, passphrase: x.passphrase, auth: CAUTH.includes(normAuth(x.auth)) ? normAuth(x.auth) : CAUTH[0], hidden: !!x.hidden, b: new Set()};
+      n.b.add(x.band);
+    }
+    const list = Object.values(nets).map(n => ({...n, bands: n.b.size > 1 ? 'both' : (n.b.has('5 GHz') ? '5' : '2')}));
+    $('#cNets').innerHTML = list.map(netRow).join('');
+    $('#cMsg').textContent = `${list.length} WLANs übernommen – noch nicht gespeichert`;
+  } catch (e) { $('#cMsg').textContent = '❌ ' + e.message; }
+};
+$('#cRec').onclick = () => {
+  $('#cCountry').value = 'germany';
+  $('#cRadio').innerHTML = centralRadioRow('radio2', '2,4 GHz', {enabled: true, width: '20', channel: 'plan'}, false) + centralRadioRow('radio5', '5 GHz', {enabled: true, width: '80', channel: 'auto', skipDfs: '10min-cac'}, true);
+  document.querySelectorAll('#cNets [data-c=auth]').forEach(s => s.value = CAUTH[0]);
+  $('#cMsg').textContent = 'Empfehlung eingetragen – noch nicht gespeichert';
+};
+$('#cSave').onclick = async () => {
+  $('#cSave').disabled = true; $('#cMsg').textContent = 'speichere …';
+  try {
+    central = await api('POST', '/api/central', collectCentral());
+    renderCentral(central);
+    $('#cMsg').textContent = 'gespeichert – prüfe Geräte …';
+    const rows = central.devices.length ? await api('POST', '/api/central/preview', {}) : [];
+    renderCentralResult(rows);
+    $('#cMsg').textContent = 'gespeichert und geprüft';
+  } catch (e) { $('#cMsg').textContent = '❌ ' + e.message; }
+  $('#cSave').disabled = false;
+  render();
+};
+function renderCentralResult(rows) {
+  const todo = rows.filter(r => r.plan && !r.plan.noop && !r.plan.blocked);
+  let h = '<h3>Prüfung der ausgewählten Geräte</h3>' + (rows.length ? '' : '<div class="hint">keine Geräte ausgewählt</div>');
+  h += rows.map(r => {
+    const p = r.plan;
+    const head = r.error ? '❌' : p.blocked ? '⛔' : p.noop ? '✅' : '⚠';
+    const body = r.error ? `<div style="color:#f0a0a0">${esc(r.error)}</div>` : p.noop ? '<span class="hint">entspricht der Vorgabe</span>' : planList(p);
+    return `<div style="margin-bottom:10px">${head} <b>${esc(r.identity)}</b> ${body}</div>`;
+  }).join('');
+  if (todo.length && central.enabled) h += `<div class="hint">Ausrollen läuft nacheinander; je Gerät Backup auf den Manager, Rückweg-Backup auf dem Gerät, danach Prüfung. Fortschritt oben in der Statusleiste.</div>
+    <div class="btns" style="justify-content:flex-start"><button class="primary" id="cRun" title="Setzt die WLAN-Konfiguration der ${todo.length} abweichenden Geräte zurück und baut sie nach der Vorgabe neu auf – nacheinander, mit Backup und automatischem Rückweg. WLAN-Geräte werden dabei kurz getrennt.">Auf ${todo.length} Gerät${todo.length > 1 ? 'en' : ''} ausrollen</button></div>`;
+  else if (todo.length) h += '<div class="hint" style="color:var(--warn)">Zum Ausrollen „aktiviert“ anhaken und speichern.</div>';
+  $('#cResult').innerHTML = h; $('#cResult').hidden = false;
+  const run = $('#cRun');
+  if (run) run.onclick = async () => {
+    if (!confirm(`WLAN-Konfiguration auf ${todo.map(t => t.identity).join(', ')} zurücksetzen und neu ausrollen?\nVerbundene WLAN-Geräte werden kurz getrennt.`)) return;
+    run.disabled = true;
+    try { const r = await api('POST', '/api/central/apply', {ids: todo.map(t => t.id)}); showResults('Zentrale WLAN-Konfiguration ausrollen', r.results); load(); $('#cMsg').textContent = 'Ausrollen gestartet – Status oben'; }
+    catch (e) { $('#cMsg').textContent = '❌ ' + e.message; run.disabled = false; }
+  };
+}
+document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs [data-tab]').forEach(x => { x.classList.toggle('active', x === b); $('#' + x.dataset.tab).hidden = x !== b; });
+  if (b.dataset.tab === 'tabCentral' && !document.querySelector('#cNets tr') && central) renderCentral(central);
+});
+
+// --- WLAN im ganzen Netz ---
+async function netWlanDialog() {
+  const devs = (data.devices || []).filter(d => d.apiStatus === 'ok' && d.wirelessPkg);
+  $('#nPlan').hidden = true; $('#nNew').value = ''; $('#nPass').value = ''; $('#nAuth').value = '';
+  $('#nSsid').innerHTML = ''; $('#nList').textContent = 'lese WLAN aller Geräte …';
+  $('#nDlg').showModal();
+  const where = {}; const failed = [];
+  await Promise.all(devs.map(async d => {
+    try {
+      const r = await fetch(`/api/devices/${encodeURIComponent(d.id)}/wlan`, {cache: 'no-store'});
+      if (!r.ok) throw new Error(await r.text());
+      for (const x of (await r.json()).interfaces || []) {
+        if (!x.ssid) continue;
+        ((where[x.ssid] ||= {})[d.id] ||= {d, ifs: []}).ifs.push(x.name);
+      }
+    } catch (e) { failed.push(d.identity); }
+  }));
+  const ssids = Object.keys(where).sort();
+  $('#nSsid').innerHTML = ssids.map(s => `<option value="${esc(s)}">${esc(s)} (${Object.keys(where[s]).length} Geräte)</option>`).join('');
+  $('#nList').innerHTML = ssids.map(s => `<div><b>${esc(s)}</b>: ${Object.values(where[s]).map(v => `${esc(v.d.identity)} (${v.ifs.map(esc).join(', ')})`).join(' · ')}</div>`).join('')
+    + (failed.length ? `<div style="color:var(--warn)">nicht gelesen: ${failed.map(esc).join(', ')}</div>` : '');
+  $('#nPrev').onclick = async () => {
+    const ssid = $('#nSsid').value; if (!ssid) return;
+    const edit = {matchSsid: ssid};
+    if ($('#nNew').value) edit.ssid = $('#nNew').value;
+    if ($('#nPass').value) edit.passphrase = $('#nPass').value;
+    if ($('#nAuth').value) edit.auth = $('#nAuth').value;
+    if (!edit.ssid && !edit.passphrase && !edit.auth) { boxMsg($('#nPlan'), 'Neue SSID, neues Passwort und/oder Verschlüsselung wählen.'); return; }
+    const ids = Object.keys(where[ssid]);
+    boxMsg($('#nPlan'), 'frage Geräte …');
+    let rows;
+    try { rows = await api('POST', '/api/wlan/preview', {ids, edit}); }
+    catch (e) { boxMsg($('#nPlan'), '❌ ' + e.message); return; }
+    const todo = rows.filter(r => r.plan && !r.plan.noop && !r.plan.blocked);
+    const bad = rows.filter(r => r.error || (r.plan && r.plan.blocked));
+    let h = '<h3>Vorschau</h3>' + rows.map(r => `<div style="margin-bottom:8px"><b>${esc(r.identity)}</b>${r.error ? `<div style="color:#f0a0a0">❌ ${esc(r.error)}</div>` : planList(r.plan)}</div>`).join('');
+    if (todo.length) h += `<div class="hint">Die Geräte werden nacheinander geändert, jeweils mit Backup und automatischem Zurückrollen.${bad.length ? ' Geräte mit Fehler werden ausgelassen.' : ''}</div>
+      <div class="btns" style="justify-content:flex-start"><button class="primary" id="nRun" title="Ändert das WLAN auf den ${todo.length} Geräten mit Änderungen – nacheinander, je Gerät mit Backup und automatischem Zurückrollen. Fortschritt oben in der Statusleiste.">Auf ${todo.length} Gerät${todo.length > 1 ? 'en' : ''} ausführen</button></div>`;
+    $('#nPlan').innerHTML = h; $('#nPlan').hidden = false;
+    const run = $('#nRun');
+    if (run) run.onclick = async () => {
+      run.disabled = true;
+      try {
+        const r = await api('POST', '/api/wlan/apply', {ids: todo.map(t => t.id), edit});
+        $('#nDlg').close(); showResults(`WLAN „${ssid}“ ändern`, r.results); load();
+      } catch (e) { boxMsg($('#nPlan'), '❌ ' + e.message); }
+    };
+  };
+}
+$('#netWlanBtn').onclick = netWlanDialog;
+function jobCell(d) {
+  const j = d.job; if (!j) return '';
+  const cls = j.running ? 'b-warn' : (j.ok ? 'b-ok' : 'b-bad');
+  const lbl = j.running ? 'läuft' : (j.ok ? 'fertig' : 'Fehler');
+  return `<span class="badge ${cls}">${kindName(j.kind)} ${lbl}</span>
+    <div class="hint" style="white-space:normal;max-width:320px">${esc(j.step)}</div>
+    <details><summary class="hint">Protokoll</summary><pre class="mono" style="white-space:pre-wrap;max-width:420px">${esc((j.log || []).join('\n'))}</pre></details>`;
+}
+
+// Statusleiste oben: laufende Aktionen sowie die der letzten 15 Minuten.
+function renderJobs() {
+  const ds = (data.devices || []).filter(d => d.job && (d.job.running || Date.now() - new Date(d.job.ended) < 15 * 60 * 1000));
+  const running = ds.filter(busy);
+  $('#jobs').hidden = ds.length === 0;
+  $('#jobs').classList.toggle('done', running.length === 0);
+  $('#jobsTitle').textContent = running.length
+    ? `⚠ Aktion läuft auf ${running.length} Gerät${running.length > 1 ? 'en' : ''} – Geräte nicht vom Strom trennen`
+    : 'Zuletzt ausgeführte Aktionen';
+  $('#jobsBody').innerHTML = ds.map(d => {
+    const j = d.job;
+    const mins = Math.max(0, Math.round(((j.running ? Date.now() : new Date(j.ended)) - new Date(j.started)) / 60000));
+    const icon = j.running ? '<span class="spin"></span>' : `<span class="jobicon">${j.ok ? '✅' : '❌'}</span>`;
+    return `<div class="jobline">${icon}<div><b>${esc(d.identity)}</b> · ${kindName(j.kind)} · ${j.running ? 'läuft seit' : 'Dauer'} ${mins} min
+      <div class="hint">${esc(j.step)}</div></div></div>`;
+  }).join('');
+}
+
+// --- WLAN-Clients ---
+const openClients = new Set(); // aufgeklappte Gerätezeilen
+let clientSort = {key: 'device', dir: 1};
+function dur(s) {
+  if (!s) return '';
+  if (s < 3600) return `${Math.floor(s / 60)} min`;
+  return uptime(s);
+}
+function signalCell(dbm) {
+  if (!dbm) return '<span class="mute">–</span>';
+  const [cls, txt] = dbm >= -60 ? ['b-ok', 'gut'] : dbm >= -70 ? ['b-warn', 'mittel'] : ['b-bad', 'schwach'];
+  return `<span class="badge ${cls}" title="Signalstärke beim Access Point: ab −60 dBm gut, −60 bis −70 mittel, darunter schwach.">${dbm} dBm · ${txt}</span>`;
+}
+function clientsTable(rows, withDevice) {
+  const cols = [['device', 'Gerät'], ['ssid', 'SSID'], ['band', 'Band'], ['signal', 'Signal'], ['rate', 'Rate (senden/empfangen)'], ['uptime', 'verbunden seit'], ['mac', 'MAC'], ['ip', 'IP']].filter(([k]) => withDevice || k !== 'device');
+  const head = cols.map(([k, l]) => withDevice
+    ? `<th><button class="small" type="button" data-csort="${k}" style="background:none;padding:0;color:var(--muted)" title="Sortiert die Liste nach ${l}; erneuter Klick dreht die Reihenfolge um. Ändert nichts.">${l}${clientSort.key === k ? (clientSort.dir > 0 ? ' ▲' : ' ▼') : ''}</button></th>`
+    : `<th>${l}</th>`).join('');
+  const body = rows.map(c => `<tr>${withDevice ? `<td>${esc(c.device)}</td>` : ''}<td>${esc(c.ssid)}<div class="hint">${esc(c.interface)}</div></td><td>${esc(c.band)}</td><td>${signalCell(c.signal)}</td>
+    <td class="mono">${esc(c.txRate || '')}${c.rxRate ? ' / ' + esc(c.rxRate) : ''}</td><td>${dur(c.uptime)}</td><td class="mono">${esc(c.mac)}</td><td class="mono">${c.ip ? `<a href="http://${esc(c.ip)}/" target="_blank" rel="noopener">${esc(c.ip)}</a>` : ''}</td></tr>`).join('');
+  return `<table><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td colspan="${cols.length}" class="mute">keine WLAN-Clients verbunden</td></tr>`}</tbody></table>`;
+}
+function allClients() {
+  const out = [];
+  for (const d of data.devices || []) for (const c of d.wlanClients || []) out.push({...c, device: d.identity});
+  const k = clientSort.key, dir = clientSort.dir;
+  const val = c => k === 'rate' ? parseFloat(c.txRate) || 0 : c[k] ?? '';
+  return out.sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * dir || (b.signal || 0) - (a.signal || 0); });
+}
+function renderAllClients() {
+  const list = allClients();
+  const devs = (data.devices || []).filter(d => d.wirelessPkg);
+  const errs = devs.filter(d => d.wlanClientsError).map(d => `${esc(d.identity)}: ${esc(d.wlanClientsError)}`);
+  const at = devs.map(d => d.wlanClientsAt).filter(Boolean).sort()[0];
+  $('#aSum').innerHTML = `${list.length} Verbindungen auf ${devs.length} Geräten · ` + devs.map(d => `${esc(d.identity)} ${(d.wlanClients || []).length}`).join(' · ')
+    + (at ? ` · Stand ${new Date(at).toLocaleTimeString('de-DE')}` : '') + (errs.length ? `<div style="color:var(--warn)">nicht gelesen: ${errs.join('; ')}</div>` : '');
+  $('#aBody').innerHTML = clientsTable(list, true);
+}
+$('#aBody').addEventListener('click', e => {
+  const b = e.target.closest('[data-csort]'); if (!b) return;
+  clientSort = {key: b.dataset.csort, dir: clientSort.key === b.dataset.csort ? -clientSort.dir : 1};
+  renderAllClients();
+});
+$('#aRefresh').onclick = async () => {
+  $('#aRefresh').disabled = true; $('#aSum').textContent = 'lese alle Geräte …';
+  try { await api('POST', '/api/wlan/clients/refresh', {}); await load(); } catch (e) { flash('Fehler: ' + e.message); }
+  $('#aRefresh').disabled = false; renderAllClients();
+};
+$('#tiles').addEventListener('click', e => {
+  if (!e.target.closest('#tileClients')) return;
+  renderAllClients(); $('#aDlg').showModal();
+});
+
+function render() {
+  renderJobs();
+  if ($('#aDlg').open) renderAllClients();
+  const q = $('#q').value.toLowerCase();
+  const ds = data.devices || [];
+  const list = ds.filter(d => !q || JSON.stringify(d).toLowerCase().includes(q));
+  $('#rows').innerHTML = list.map(d => row(d) + (openClients.has(d.id)
+    ? `<tr class="sub"><td></td><td colspan="9"><div class="wrap" style="margin:0 0 6px">${clientsTable((d.wlanClients || []).slice().sort((a, b) => (b.signal || 0) - (a.signal || 0)), false)}</div></td></tr>` : '')).join('')
+    || '<tr><td colspan="10" class="mute">Noch keine Geräte gefunden.</td></tr>';
+  const n6 = ds.filter(d => major(d.version) === '6').length;
+  const n7 = ds.filter(d => major(d.version) === '7').length;
+  const nUpd = ds.filter(d => d.currentFirmware && d.upgradeFirmware && d.currentFirmware !== d.upgradeFirmware).length;
+  const nErr = ds.filter(d => d.apiStatus && d.apiStatus !== 'ok').length;
+  $('#tiles').innerHTML = [
+    [ds.length, 'Geräte'], [n7, 'RouterOS 7'], [n6, 'RouterOS 6 (Migration)'], [nUpd, 'Firmware-Update'], [nErr, 'API-Problem'],
+    [ds.filter(d => !d.lastBackup || Date.now() - new Date(d.lastBackup) > 36 * 3600 * 1000).length, 'ohne Backup (36 h)']
+  ].map(([n, t]) => `<div class="tile"><b>${n}</b><span>${t}</span></div>`).join('')
+    + `<button class="tile" id="tileClients" type="button" title="Zeigt alle WLAN-Verbindungen über alle Geräte (Gerät, SSID, Band, Signal, Rate, Dauer, MAC, IP). Wird jede Minute aktualisiert. Ändert nichts."><b>${ds.reduce((n, d) => n + (d.wlanClients || []).length, 0)}</b><span>WLAN-Clients ›</span></button>`;
+  $('#noCred').hidden = !!data.defaultCredSet;
+  $('#ver').textContent = data.version || '';
+  const nb = data.nextBackup && !data.nextBackup.startsWith('0001') ? new Date(data.nextBackup) : null;
+  const u = data.update || {};
+  $('#foot').innerHTML = `Version ${esc(data.version)} · API-Port ${data.apiPort} · nächtliches Backup: ${nb ? 'nächster Lauf ' + nb.toLocaleString('de-DE', {dateStyle: 'short', timeStyle: 'short'}) : 'aus'} · Stand ${new Date().toLocaleTimeString('de-DE')}`
+    + (u.mode && u.mode !== 'off' ? ` · Update-Prüfung ${u.checkedAt && !u.checkedAt.startsWith('0001') ? new Date(u.checkedAt).toLocaleString('de-DE', {dateStyle: 'short', timeStyle: 'short'}) : 'noch nicht'} <button class="small" id="updCheck" title="Fragt sofort bei GitHub nach, ob es eine neuere Version des Managers gibt. Installiert nichts.">jetzt prüfen</button>` : '');
+  renderUpdate(u);
+}
+
+// Selbst-Update: Hinweis, Knopf, Fortschritt
+function renderUpdate(u) {
+  let h = '';
+  if (u.busy) h = `<h3><span class="spin" style="display:inline-block;vertical-align:middle"></span> Manager wird aktualisiert</h3><div class="hint">${esc(u.status)} – die Seite lädt danach neu.</div>`;
+  else if (u.available) {
+    h = `<h3>Neue Version ${esc(u.latest)} verfügbar <span class="mute" style="font-weight:normal">(läuft: ${esc(u.current)})</span></h3>`
+      + (u.url ? `<div class="hint"><a href="${esc(u.url)}" target="_blank" rel="noopener">Änderungen ansehen</a></div>` : '')
+      + (u.notes ? `<details><summary class="hint">Release-Notizen</summary><pre class="mono" style="white-space:pre-wrap">${esc(u.notes)}</pre></details>` : '');
+    if (u.mode === 'binary') h += `<div class="btns" style="justify-content:flex-start"><button class="primary" id="updApply" title="Lädt die neue Version von GitHub, prüft die Prüfsumme, startet sie probehalber und ersetzt dann das laufende Programm (die alte Version bleibt als .old erhalten). Der Manager ist dabei wenige Sekunden nicht erreichbar; an den Geräten ändert sich nichts. Nicht möglich, solange auf einem Gerät eine Aktion läuft.">Jetzt aktualisieren</button></div>`;
+    else h += `<div class="hint" style="margin-top:6px">${esc(u.hint)}</div>`;
+  }
+  if (u.error) h += `<div class="hint" style="color:var(--warn);margin-top:6px">${esc(u.error)}</div>`;
+  $('#upd').innerHTML = h; $('#upd').hidden = !h;
+  const a = $('#updApply');
+  if (a) a.onclick = async () => {
+    if (!confirm(`Manager auf Version ${u.latest} aktualisieren?
+Er startet dabei neu (wenige Sekunden).`)) return;
+    a.disabled = true;
+    try { await api('POST', '/api/self-update/apply', {}); load(); } catch (e) { flash('Fehler: ' + e.message); a.disabled = false; }
+  };
+}
+document.addEventListener('click', async e => {
+  if (!e.target.closest('#updCheck')) return;
+  e.target.disabled = true;
+  try { await api('POST', '/api/self-update/check', {}); await load(); flash('Update-Prüfung erledigt'); } catch (err) { flash('Fehler: ' + err.message); }
+});
+
+async function load() {
+  try {
+    const prev = data.version;
+    data = await (await fetch('/api/devices', {cache: 'no-store'})).json();
+    if (prev && data.version && prev !== data.version) { location.reload(); return; } // nach Selbst-Update
+    render();
+  }
+  catch (e) { flash('Laden fehlgeschlagen: ' + e.message); }
+}
+
+function credDialog(dev) {
+  $('#dlgTitle').textContent = dev ? `Zugangsdaten für ${dev.identity || dev.ip}` : 'Standard-Zugangsdaten';
+  $('#dlgHint').textContent = dev ? 'Gilt nur für dieses Gerät und hat Vorrang vor den Standard-Zugangsdaten.' : 'Werden für alle Geräte ohne eigene Zugangsdaten verwendet. Gespeichert verschlüsselt.';
+  $('#cu').value = 'admin'; $('#cp').value = '';
+  $('#dlgDel').hidden = !(dev && dev.hasOwnCred);
+  $('#dlgDel').onclick = async () => { await api('DELETE', `/api/devices/${encodeURIComponent(dev.id)}/credentials`); $('#dlg').close(); flash('Eigene Zugangsdaten gelöscht'); setTimeout(load, 3000); };
+  $('#dlg').onclose = async () => {
+    if ($('#dlg').returnValue !== 'ok') return;
+    const body = {user: $('#cu').value, password: $('#cp').value};
+    try {
+      await api('POST', dev ? `/api/devices/${encodeURIComponent(dev.id)}/credentials` : '/api/credentials/default', body);
+      flash('Gespeichert, lese neu aus …'); setTimeout(load, 4000);
+    } catch (e) { flash('Fehler: ' + e.message); }
+  };
+  $('#dlg').returnValue = '';
+  $('#dlg').showModal();
+}
+
+$('#rows').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const dev = id => data.devices.find(d => d.id === id);
+  if (b.dataset.upd) {
+    const d = dev(b.dataset.upd);
+    if (!confirm(`${d.identity}: Backup auf den Manager holen, RouterOS und Firmware aktualisieren?
+Das Gerät startet dabei ein- bis zweimal neu.`)) return;
+    await api('POST', '/api/update', {ids: [d.id]}); flash('Update gestartet'); load();
+  }
+  if (b.dataset.reboot) {
+    const d = dev(b.dataset.reboot);
+    if (!confirm(`${d.identity} jetzt neu starten?`)) return;
+    await api('POST', '/api/reboot', {ids: [d.id]}); flash('Neustart gestartet'); load();
+  }
+  if (b.dataset.clients) { const id = b.dataset.clients; openClients.has(id) ? openClients.delete(id) : openClients.add(id); render(); }
+  if (b.dataset.set) settingsDialog(dev(b.dataset.set));
+  if (b.dataset.wlan) wlanDialog(dev(b.dataset.wlan));
+  if (b.dataset.backup) {
+    await api('POST', '/api/backup', {ids: [b.dataset.backup]}); flash('Backup gestartet'); load();
+  }
+  if (b.dataset.blist) {
+    const d = dev(b.dataset.blist);
+    const base = `/api/devices/${encodeURIComponent(d.id)}/backups`;
+    const list = await (await fetch(base, {cache: 'no-store'})).json();
+    $('#bTitle').textContent = `Backups von ${d.identity}`;
+    $('#bBody').innerHTML = (list || []).map(f => `<div><a href="${base}/${encodeURIComponent(f.name)}" title="Lädt die Datei herunter.">${esc(f.name)}</a> <span class="mute">${(f.size / 1024).toFixed(1)} KB · ${new Date(f.time).toLocaleString('de-DE')}</span></div>`).join('') || '<span class="mute">keine</span>';
+    $('#bDlg').showModal();
+  }
+  if (b.dataset.cred) credDialog(data.devices.find(d => d.id === b.dataset.cred));
+  if (b.dataset.poll) { await api('POST', `/api/devices/${encodeURIComponent(b.dataset.poll)}/poll`); flash('wird ausgelesen …'); setTimeout(load, 3000); }
+});
+$('#credBtn').onclick = () => credDialog(null);
+
+function showResults(title, res) {
+  $('#results').hidden = false;
+  $('#resTitle').textContent = title;
+  $('#resBody').innerHTML = (res || []).map(r => `<div>${r.ok ? '<span class="badge b-ok">ok</span>' : '<span class="badge b-bad">Fehler</span>'} <b>${esc(r.identity)}</b> <span class="mute">${esc(r.msg)}</span></div>`).join('') || '<span class="mute">keine Geräte</span>';
+}
+async function loadMgr() {
+  const m = await (await fetch('/api/manager-user', {cache: 'no-store'})).json();
+  $('#mgrBody').innerHTML = m.exists
+    ? `Benutzer <span class="mono">${esc(m.user)}</span> · Passwort <span class="mono" id="mgrPw">${esc(m.password)}</span> <button class="small" id="mgrCopy" title="Kopiert das Passwort des Verwaltungsbenutzers in die Zwischenablage.">kopieren</button>`
+      + (m.isDefault ? '' : ' <span class="badge b-warn">noch nicht Standard</span>')
+      + '<div style="margin-top:6px">Mit diesem Benutzer meldet sich der Manager auf allen Geräten an (Gruppe full). Neue Geräte: „Auf allen Geräten einrichten“ erneut ausführen.</div>'
+    : 'Noch nicht eingerichtet. Der Manager legt auf jedem Gerät einen eigenen Benutzer <span class="mono">mikrotik-manager</span> mit Zufallspasswort an und meldet sich künftig damit an.';
+  const c = $('#mgrCopy'); if (c) c.onclick = () => navigator.clipboard.writeText(m.password).then(() => flash('kopiert'));
+}
+$('#mgrBtn').onclick = async () => {
+  $('#mgrBtn').disabled = true; flash('richte ein …');
+  try { const r = await api('POST', '/api/manager-user', {}); showResults('Verwaltungsbenutzer einrichten', r.results); }
+  catch (e) { flash('Fehler: ' + e.message); }
+  $('#mgrBtn').disabled = false; loadMgr(); setTimeout(load, 3000);
+};
+$('#pwBtn').onclick = () => { $('#pp').value = ''; $('#pwDlg').returnValue = ''; $('#pwDlg').showModal(); };
+$('#pwDlg').onclose = async () => {
+  if ($('#pwDlg').returnValue !== 'ok') return;
+  flash('setze Passwort …');
+  try { const r = await api('POST', '/api/user-password', {user: $('#pu').value, password: $('#pp').value}); showResults(`Passwort für ${$('#pu').value} setzen`, r.results); }
+  catch (e) { flash('Fehler: ' + e.message); }
+};
+loadMgr();
+$('#discBtn').onclick = async () => { await api('POST', '/api/discover'); flash('Suche läuft …'); setTimeout(load, 4000); };
+$('#q').oninput = render;
+load().then(loadCentral);
+// solange ein Job läuft, öfter aktualisieren
+(function tick() { setTimeout(() => load().finally(tick), (data.devices || []).some(busy) || (data.update || {}).busy ? 4000 : 15000); })();
+</script>
+</body>
+</html>
