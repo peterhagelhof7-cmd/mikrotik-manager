@@ -132,9 +132,24 @@ Gerät wird gelöscht. Je Gerät bleiben die letzten 20 Sicherungen.
 Zusätzlich **jede Nacht um 04:00** für alle Geräte (`BACKUP_TIME`, `off` = aus) und
 **automatisch vor jeder Änderung**. Download über den Knopf „N Dateien“ in der Zeile.
 
-**Wiederherstellen:** `.backup`-Datei in WinBox/WebFig unter *Files* hochladen →
-*System → Backup → Restore* (Gerät startet neu). Ein Backup gehört zu genau diesem
-Gerät (enthält MAC-Adressen).
+**Zurückspielen (Rollback):** In der Backup-Liste steht neben jeder `.backup`-Datei
+**Zurückspielen**. Der Manager prüft zuerst und fragt nach, dann:
+
+1. aktuellen Stand als Backup `…-vor-rollback` auf den Manager sichern (damit lässt
+   sich der Rollback selbst wieder zurücknehmen)
+2. Backup aufs Gerät laden und einspielen – Neustart, ca. 1–2 Minuten offline
+3. warten, bis das Gerät wieder per API erreichbar ist
+
+Die gesamte Konfiguration geht auf den Stand des Backups, auch IP-Adressen, Benutzer
+und Passwörter. Gab es den Benutzer, mit dem sich der Manager anmeldet, damals noch
+nicht oder mit anderem Passwort, kommt der Manager danach nicht mehr aufs Gerät –
+dann die Zugangsdaten im Manager anpassen. Ein Backup enthält keine Pakete:
+Braucht es ein anderes WLAN-Paket als installiert (z. B. ein Backup von vor der
+Umstellung auf `wifi`), lehnt der Manager ab, weil das WLAN danach aus wäre.
+
+Von Hand geht es auch: `.backup`-Datei herunterladen, in WinBox/WebFig unter *Files*
+hochladen → *System → Backup → Restore*. Ein Backup gehört zu genau diesem Gerät
+(enthält MAC-Adressen).
 
 ### Einstellungen
 

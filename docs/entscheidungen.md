@@ -374,3 +374,23 @@ umstellen, die WLAN-Konfiguration wird dabei NICHT übernommen).
 - Offen: Die zentrale WLAN-Verwaltung kennt diesen Aufbau nicht; „VLAN je SSID“
   würde die WLANs auf die Haupt-Bridge mit VLAN-Filter umbauen. Live noch nicht
   ausgeführt.
+
+## 2026-10-19 – Rollback auf ein gespeichertes Backup
+
+- User-Wunsch: neben jeder Backup-Datei die Funktion, genau dieses Backup
+  zurückzuspielen. Knopf „Zurückspielen“ nur an `.backup` (nicht `.rsc`).
+- Ablauf (`restore.go`, Job-Art `restore`): Prüfung → Sicherheits-Backup
+  `vor-rollback` → SFTP-Upload + `/system backup load` → Neustart abwarten.
+  Upload/Laden aus dem WLAN-Rückweg in `loadBackup()` zusammengefasst (gleicher
+  Code für beide).
+- Vor dem Sicherheits-Backup wird die Zieldatei in eine temporäre Kopie gezogen:
+  Das Sicherheits-Backup räumt sonst bei 20 Sicherungen evtl. genau das älteste
+  Backup weg, das zurückgespielt werden soll.
+- **Paketprüfung über den `.rsc`:** `.backup` enthält nur Konfiguration. Enthält
+  der Export `/interface wireless` und das Gerät hat kein wireless (oder
+  `/interface wifi` ohne wifi-Paket) → abgelehnt, sonst wäre das WLAN aus. Ein
+  automatischer Paketwechsel (wifi deinstallieren → wireless installieren → laden,
+  3 Neustarts) wurde bewusst nicht gebaut.
+- Benutzer stehen nicht im `/export` → keine Prüfung möglich, nur Warnung in der
+  Rückfrage (Manager-Benutzer muss im Backup-Stand existieren).
+- Live noch nicht ausgeführt.

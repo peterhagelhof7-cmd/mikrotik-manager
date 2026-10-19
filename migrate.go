@@ -822,9 +822,19 @@ func (p *Poller) migrateFallback(ctx context.Context, id string, x *Job, name, b
 			return err
 		}
 	}
+	if err := p.loadBackup(ctx, id, cl, x, name, backupFile, filepath.Base(backupFile)); err != nil {
+		return err
+	}
+	p.jobs.step(x, name, "alter Zustand (wireless + Backup) wiederhergestellt")
+	return nil
+}
+
+// loadBackup lädt eine .backup-Datei vom Manager aufs Gerät, spielt sie ein
+// (Neustart) und wartet, bis das Gerät wieder erreichbar ist. Schließt cl.
+func (p *Poller) loadBackup(ctx context.Context, id string, cl *routeros.Client, x *Job, name, backupFile, label string) error {
 	defer func() { cl.Close() }()
 
-	p.jobs.step(x, name, "spiele Backup %s ein – Neustart …", filepath.Base(backupFile))
+	p.jobs.step(x, name, "spiele Backup %s ein – Neustart …", label)
 	remote := "mm-restore.backup"
 	rctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	if r, err := cl.RunContext(rctx, "/file/print", "?name=flash", "=.proplist=name"); err == nil && len(r.Re) > 0 {
@@ -855,7 +865,6 @@ func (p *Poller) migrateFallback(ctx context.Context, id string, x *Job, name, b
 		return err
 	}
 	removeDeviceFile(ctx, cl, remote)
-	p.jobs.step(x, name, "alter Zustand (wireless + Backup) wiederhergestellt")
 	return nil
 }
 

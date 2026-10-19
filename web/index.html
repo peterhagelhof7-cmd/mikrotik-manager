@@ -176,7 +176,7 @@ footer{color:var(--muted);font-size:12px;padding:16px;text-align:center}
 
 <dialog id="bDlg">
   <h3 id="bTitle" style="margin-top:0"></h3>
-  <div class="hint">.backup = Binär-Backup zum Wiederherstellen (Datei aufs Gerät laden, dann System → Backup → Restore). .rsc = Text-Export der Konfiguration zum Nachlesen. Beide enthalten Passwörter/WLAN-Schlüssel. Es werden die letzten 20 Sicherungen je Gerät aufbewahrt.</div>
+  <div class="hint">.backup = Binär-Backup zum Wiederherstellen – <b>Zurückspielen</b> setzt das Gerät auf diesen Stand (vorher wird der aktuelle Stand als „vor-rollback“ gesichert, das Gerät startet neu). .rsc = Text-Export der Konfiguration zum Nachlesen. Beide enthalten Passwörter/WLAN-Schlüssel. Es werden die letzten 20 Sicherungen je Gerät aufbewahrt.</div>
   <div id="bBody" style="margin-top:10px"></div>
   <div class="btns"><button type="button" onclick="this.closest('dialog').close()" title="Schließt die Liste.">Schließen</button></div>
 </dialog>
@@ -301,7 +301,7 @@ function row(d) {
 }
 
 const busy = d => d.job && d.job.running;
-const kindName = k => ({update: 'Update', reboot: 'Neustart', backup: 'Backup', bridge: 'Bridge', dhcp: 'DHCP-Client', wlan: 'WLAN', wifimigrate: 'Umstellung wifi'})[k] || k;
+const kindName = k => ({update: 'Update', reboot: 'Neustart', backup: 'Backup', bridge: 'Bridge', dhcp: 'DHCP-Client', wlan: 'WLAN', wifimigrate: 'Umstellung wifi', restore: 'Rollback'})[k] || k;
 
 // Einstellungen: Name direkt; Bridge/DHCP erst Vorschau, dann Ausführen mit Rückroll-Wächter.
 function settingsDialog(d) {
@@ -894,13 +894,31 @@ Das Gerät startet dabei ein- bis zweimal neu.`)) return;
     const base = `/api/devices/${encodeURIComponent(d.id)}/backups`;
     const list = await (await fetch(base, {cache: 'no-store'})).json();
     $('#bTitle').textContent = `Backups von ${d.identity}`;
-    $('#bBody').innerHTML = (list || []).map(f => `<div><a href="${base}/${encodeURIComponent(f.name)}" title="Lädt die Datei herunter.">${esc(f.name)}</a> <span class="mute">${(f.size / 1024).toFixed(1)} KB · ${new Date(f.time).toLocaleString('de-DE')}</span></div>`).join('') || '<span class="mute">keine</span>';
+    $('#bBody').innerHTML = (list || []).map(f => `<div><a href="${base}/${encodeURIComponent(f.name)}" title="Lädt die Datei herunter.">${esc(f.name)}</a> <span class="mute">${(f.size / 1024).toFixed(1)} KB · ${new Date(f.time).toLocaleString('de-DE')}</span>${f.name.endsWith('.backup') ? ` <button class="small" data-restore="${esc(f.name)}" ${busy(d) ? 'disabled' : ''} title="Nach Prüfung und Rückfrage: sichert den aktuellen Stand als „vor-rollback“ auf den Manager, spielt dieses Backup auf das Gerät ein und wartet, bis es nach dem Neustart wieder erreichbar ist (ca. 1–2 Minuten offline).">Zurückspielen</button>` : ''}</div>`).join('') || '<span class="mute">keine</span>';
+    $('#bBody').dataset.dev = d.id;
     $('#bDlg').showModal();
   }
   if (b.dataset.cred) credDialog(data.devices.find(d => d.id === b.dataset.cred));
   if (b.dataset.poll) { await api('POST', `/api/devices/${encodeURIComponent(b.dataset.poll)}/poll`); flash('wird ausgelesen …'); setTimeout(load, 3000); }
 });
 $('#credBtn').onclick = () => credDialog(null);
+
+$('#bBody').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-restore]'); if (!b) return;
+  const d = data.devices.find(x => x.id === $('#bBody').dataset.dev); if (!d) return;
+  const url = `/api/devices/${encodeURIComponent(d.id)}/backups/${encodeURIComponent(b.dataset.restore)}/restore`;
+  b.disabled = true; b.textContent = 'prüfe …';
+  try {
+    const c = await (await fetch(url, {cache: 'no-store'})).json();
+    if (c.blocked) { alert(`${d.identity}: ${c.blocked}`); return; }
+    if (!confirm(`${d.identity} auf das Backup ${b.dataset.restore} zurücksetzen?\n\n- ${(c.warn || []).join('\n- ')}`)) return;
+    const r = await api('POST', url);
+    const res = (r.results || [])[0];
+    flash(res && res.ok ? 'Rollback gestartet' : 'Fehler: ' + (res ? res.msg : 'unbekannt'));
+    $('#bDlg').close(); load();
+  } catch (err) { flash('Fehler: ' + err.message); }
+  finally { b.disabled = false; b.textContent = 'Zurückspielen'; }
+});
 
 function showResults(title, res) {
   $('#results').hidden = false;

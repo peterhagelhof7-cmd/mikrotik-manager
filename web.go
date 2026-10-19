@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -116,6 +117,19 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 		writeJSON(rw, w.pl.ListBackups(r.PathValue("id")))
 	})))
 	mux.Handle("GET /api/devices/{id}/backups/{name}", w.auth(http.HandlerFunc(w.downloadBackup)))
+	mux.Handle("GET /api/devices/{id}/backups/{name}/restore", w.auth(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		writeJSON(rw, w.pl.CheckRestore(ctx, r.PathValue("id"), r.PathValue("name")))
+	})))
+	mux.Handle("POST /api/devices/{id}/backups/{name}/restore", w.auth(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		id, name := r.PathValue("id"), r.PathValue("name")
+		if p := w.pl.BackupPath(id, name); p == "" || !strings.HasSuffix(name, ".backup") {
+			http.Error(rw, "nur .backup-Dateien", http.StatusBadRequest)
+			return
+		}
+		writeJSON(rw, map[string]any{"results": w.pl.StartRestore(id, name)})
+	})))
 	return mux
 }
 

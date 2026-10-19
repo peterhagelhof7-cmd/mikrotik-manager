@@ -728,3 +728,40 @@ func TestSecurity(t *testing.T) {
 		t.Error("authName")
 	}
 }
+
+func TestRestorePkgCheck(t *testing.T) {
+	wireless := map[string]map[string]string{"wireless": {"name": "wireless"}}
+	wifi := map[string]map[string]string{wifiPkg: {"name": wifiPkg}, "wireless": {"available": "true"}}
+	rscOld := "/interface bridge\nadd name=bridge1\n/interface wireless security-profiles\nset [ find default=yes ] mode=dynamic-keys\n/interface wireless\nset [ find default-name=wlan1 ] ssid=Heim\n"
+	rscNew := "/interface bridge\nadd name=bridge1\n/interface wifi security\nadd name=sec1\n/interface wifi\nset [ find default-name=wifi1 ] configuration=cfg1\n"
+	rscNone := "/interface bridge\nadd name=bridge1\n"
+	for _, c := range []struct {
+		name    string
+		rsc     string
+		pk      map[string]map[string]string
+		blocked bool
+	}{
+		{"wireless auf wireless", rscOld, wireless, false},
+		{"wifi auf wifi", rscNew, wifi, false},
+		{"vor-wifi auf wifi", rscOld, wifi, true},
+		{"wifi auf wireless", rscNew, wireless, true},
+		{"ohne WLAN", rscNone, wifi, false},
+	} {
+		if got := restorePkgCheck(c.rsc, c.pk) != ""; got != c.blocked {
+			t.Errorf("%s: gesperrt=%v, erwartet %v", c.name, got, c.blocked)
+		}
+	}
+}
+
+func TestCopyToTemp(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "20261019-040000-nachts.backup")
+	os.WriteFile(src, []byte("inhalt"), 0o600)
+	tmp, err := copyToTemp(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(tmp); string(b) != "inhalt" || backupNameRe.MatchString(filepath.Base(tmp)) {
+		t.Fatalf("Kopie %s: %q", tmp, b)
+	}
+}
