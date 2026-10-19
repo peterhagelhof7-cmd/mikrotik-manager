@@ -23,19 +23,47 @@ Docker-Container (z. B. Synology).
 
 ## Schnellstart
 
-**Proxmox-LXC / Debian / Ubuntu** (als root, Details: [docs/proxmox.md](docs/proxmox.md)):
+### Debian / Ubuntu ohne Docker (systemd)
+
+Gilt für jeden Rechner mit systemd: Proxmox-LXC, VM oder normaler Server
+(Details: [docs/proxmox.md](docs/proxmox.md)). Als root:
 
 ```sh
+apt update && apt install -y curl
 curl -fsSL https://github.com/peterhagelhof7-cmd/mikrotik-manager/releases/latest/download/install.sh -o install.sh
 sh install.sh
 ```
 
-**Docker** (Host-Netz ist Pflicht, Details inkl. Synology: [docs/docker.md](docs/docker.md)):
+Das Script lädt das Release für die passende Architektur (amd64/arm64/armv7), prüft die
+SHA256-Prüfsumme, legt den Dienst-Benutzer `mikrotik-manager` an und startet den Dienst.
+Bestimmte Version: `VERSION=v0.13.0 sh install.sh`, eigener Build:
+`sh install.sh ./mikrotik-manager-linux-amd64`.
+
+| | |
+|---|---|
+| Programm | `/opt/mikrotik-manager/` (beschreibbar für das Selbst-Update) |
+| Einstellungen | `/etc/mikrotik-manager.env` (wird bei Updates nie überschrieben), danach `systemctl restart mikrotik-manager` |
+| Daten | `/var/lib/mikrotik-manager` (Geräte, verschlüsselte Zugangsdaten, Backups) |
+| Passwort | beim ersten Start erzeugt: `/var/lib/mikrotik-manager/web-password.txt` |
+| Protokoll | `journalctl -u mikrotik-manager -f` |
+| Aktualisieren | Knopf in der Oberfläche, `AUTO_UPDATE=true` oder `sh install.sh` erneut |
+| Zurück | `cd /opt/mikrotik-manager && mv mikrotik-manager.old mikrotik-manager && systemctl restart mikrotik-manager` |
+
+Der Rechner muss im **selben Netz (L2) wie die MikroTiks** hängen (MNDP-Broadcast);
+Geräte in anderen Netzen per `SCAN_CIDRS`. Bei aktiver Firewall freigeben: eingehend
+UDP 5678 (MNDP) und TCP 8080 (Oberfläche), ausgehend TCP 8728 (API), TCP 22 (Backups)
+und HTTPS zu GitHub (Selbst-Update).
+
+### Docker
+
+Host-Netz ist Pflicht (Details inkl. Synology: [docs/docker.md](docs/docker.md)):
 
 ```sh
 curl -LO https://raw.githubusercontent.com/peterhagelhof7-cmd/mikrotik-manager/main/docker-compose.yml
 docker compose up -d
 ```
+
+### Danach (beide Varianten)
 
 Oberfläche: `http://<IP>:8080`, Benutzer `admin`. Auf den MikroTiks müssen der
 API-Dienst (`/ip service` → `api`) und SSH (für Backups) an sein.
