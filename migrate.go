@@ -43,6 +43,43 @@ type legacyIf struct {
 	Hide, Disabled    bool
 	Bridge, PVID      string
 	Lists             []string
+	// wireless vlan-mode=use-tag: wifi-qcom-ac kann nicht selbst taggen. Das
+	// VLAN läuft danach über eine VLAN-Schnittstelle auf VLANParent (der bisherigen
+	// Bridge) und eine eigene Bridge (Bridge = vlanBridgeName(VLAN)).
+	VLAN, VLANParent string `json:",omitempty"`
+}
+
+func vlanIfName(vid string) string     { return "vlan" + vid }
+func vlanBridgeName(vid string) string { return "bridge-vlan" + vid }
+
+// checkUseTag prüft, ob sich vlan-mode=use-tag der Schnittstelle n sicher
+// übersetzen lässt; Ergebnis "" = ja, sonst der Sperrgrund.
+// bp ist ihr Bridge-Port, bridges/vlans die Bridges bzw. VLAN-Schnittstellen
+// des Geräts, names alle Schnittstellennamen.
+func checkUseTag(n, vid string, bp map[string]string, bridges map[string]map[string]string,
+	vlans []map[string]string, names map[string]bool) string {
+	v, err := strconv.Atoi(vid)
+	if err != nil || v < 2 || v > 4094 {
+		return fmt.Sprintf("%s: VLAN-ID %q", n, vid)
+	}
+	if bp == nil || bp["bridge"] == "" {
+		return n + ": VLAN-Modus use-tag ohne Bridge"
+	}
+	parent := bp["bridge"]
+	if bridges[parent]["vlan-filtering"] == "true" {
+		return fmt.Sprintf("%s: VLAN-Modus use-tag an Bridge %s mit VLAN-Filter", n, parent)
+	}
+	for _, m := range vlans {
+		if m["vlan-id"] == vid {
+			return fmt.Sprintf("%s: VLAN %s gibt es schon als Schnittstelle %s", n, vid, m["name"])
+		}
+	}
+	for _, x := range []string{vlanIfName(vid), vlanBridgeName(vid)} {
+		if names[x] {
+			return fmt.Sprintf("%s: Name %s ist schon vergeben", n, x)
+		}
+	}
+	return ""
 }
 
 type migration struct {
@@ -106,7 +143,9 @@ func migIfSteps(ifs []legacyIf) []string {
 			where = "virtuell an " + x.Master
 		}
 		br := "an keiner Bridge"
-		if x.Bridge != "" {
+		if x.VLAN != "" {
+			br = fmt.Sprintf("an %s (VLAN %s getaggt über %s)", x.Bridge, x.VLAN, x.VLANParent)
+		} else if x.Bridge != "" {
 			br = "an " + x.Bridge
 		}
 		state := ""
@@ -333,6 +372,19 @@ func readLegacy(ctx context.Context, cl *routeros.Client, l []map[string]string)
 			ports[m["interface"]] = m
 		}
 	}
+	bridges := map[string]map[string]string{}
+	if bl, err := printAll(ctx, cl, "/interface/bridge/print", "=.proplist=name,vlan-filtering"); err == nil {
+		for _, m := range bl {
+			bridges[m["name"]] = m
+		}
+	}
+	vlans, _ := printAll(ctx, cl, "/interface/vlan/print", "=.proplist=name,vlan-id,interface")
+	names := map[string]bool{}
+	if il, err := printAll(ctx, cl, "/interface/print", "=.proplist=name"); err == nil {
+		for _, m := range il {
+			names[m["name"]] = true
+		}
+	}
 	lists := map[string][]string{}
 	if ml, err := printAll(ctx, cl, "/interface/list/member/print"); err == nil {
 		for _, m := range ml {
@@ -361,7 +413,15 @@ func readLegacy(ctx context.Context, cl *routeros.Client, l []map[string]string)
 		if w := m["wds-mode"]; w != "" && w != "disabled" {
 			blocked = append(blocked, fmt.Sprintf("%s: WDS (%s)", n, w))
 		}
-		if v := m["vlan-mode"]; v != "" && v != "no-tag" {
+		switch v := m["vlan-mode"]; v {
+		case "", "no-tag":
+		case "use-tag":
+			if b := checkUseTag(n, m["vlan-id"], ports[n], bridges, vlans, names); b != "" {
+				blocked = append(blocked, b)
+			} else {
+				x.VLAN, x.VLANParent = m["vlan-id"], ports[n]["bridge"]
+			}
+		default:
 			blocked = append(blocked, fmt.Sprintf("%s: VLAN-Modus %s", n, v))
 		}
 		p := sec[m["security-profile"]]
@@ -396,7 +456,9 @@ func readLegacy(ctx context.Context, cl *routeros.Client, l []map[string]string)
 		if x.Install == "any" {
 			x.Install = ""
 		}
-		if bp := ports[n]; bp != nil {
+		if bp := ports[n]; x.VLAN != "" {
+			x.Bridge = vlanBridgeName(x.VLAN)
+		} else if bp != nil {
 			x.Bridge = bp["bridge"]
 			if bp["pvid"] != "" && bp["pvid"] != "1" {
 				x.PVID = bp["pvid"]
@@ -404,6 +466,20 @@ func readLegacy(ctx context.Context, cl *routeros.Client, l []map[string]string)
 		}
 		x.Lists = lists[n]
 		mig.ifs = append(mig.ifs, x)
+	}
+	// Ein VLAN darf nur an einer bisherigen Bridge hängen (Namen vlanN/bridge-vlanN).
+	parentOf := map[string]string{}
+	for _, x := range mig.ifs {
+		if x.VLAN == "" {
+			continue
+		}
+		if p, ok := parentOf[x.VLAN]; ok && p != x.VLANParent {
+			blocked = append(blocked, fmt.Sprintf("VLAN %s hängt an zwei Bridges (%s, %s)", x.VLAN, p, x.VLANParent))
+		} else if !ok {
+			parentOf[x.VLAN] = x.VLANParent
+			warn = append(warn, fmt.Sprintf("VLAN %s: %s kann nicht an der WLAN-Schnittstelle taggen. Der Manager legt die VLAN-Schnittstelle %s auf %s und die Bridge %s an, die WLANs mit VLAN %s kommen dorthin. %s selbst bleibt unverändert (kein VLAN-Filter).",
+				x.VLAN, wifiPkg, vlanIfName(x.VLAN), x.VLANParent, vlanBridgeName(x.VLAN), x.VLAN, x.VLANParent))
+		}
 	}
 	// Funkteile vor virtuellen anlegen
 	sort.SliceStable(mig.ifs, func(i, j int) bool { return mig.ifs[i].Master == "" && mig.ifs[j].Master != "" })
@@ -513,6 +589,20 @@ func wifiScript(mig *migration, radios []wifiRadio) (string, map[string]string, 
 		taken[n] = true
 		newName[x.Name] = n
 		b.WriteString("add name=" + q(n) + " master-interface=" + q(newName[x.Master]) + " configuration=" + cfg + " disabled=" + yesNo(x.Disabled) + "\n")
+	}
+
+	// VLAN-Ersatz für use-tag: VLAN-Schnittstelle auf der bisherigen Bridge und
+	// eine eigene Bridge. Mit :if, damit erneutes Einspielen nichts doppelt anlegt.
+	done := map[string]bool{}
+	for _, x := range mig.ifs {
+		if x.VLAN == "" || done[x.VLAN] {
+			continue
+		}
+		done[x.VLAN] = true
+		vi, vb := q(vlanIfName(x.VLAN)), q(vlanBridgeName(x.VLAN))
+		b.WriteString(":if ([:len [/interface bridge find name=" + vb + "]] = 0) do={ /interface bridge add name=" + vb + " comment=" + q(mmComment) + " }\n")
+		b.WriteString(":if ([:len [/interface vlan find name=" + vi + "]] = 0) do={ /interface vlan add name=" + vi + " interface=" + q(x.VLANParent) + " vlan-id=" + x.VLAN + " comment=" + q(mmComment) + " }\n")
+		b.WriteString(":if ([:len [/interface bridge port find interface=" + vi + "]] = 0) do={ /interface bridge port add bridge=" + vb + " interface=" + vi + " }\n")
 	}
 
 	var ports, members strings.Builder
@@ -861,6 +951,17 @@ func (p *Poller) applyWifiConfig(ctx context.Context, id string, cl *routeros.Cl
 			bad = append(bad, newName[li.Name]+" hat andere Werte")
 		case li.Bridge != "" && w.Bridge != li.Bridge:
 			bad = append(bad, newName[li.Name]+" nicht an "+li.Bridge)
+		}
+	}
+	if vl, err := printAll(rctx, cl, "/interface/vlan/print", "=.proplist=name,vlan-id,interface"); err == nil {
+		for _, li := range mig.ifs {
+			ok := li.VLAN == ""
+			for _, m := range vl {
+				ok = ok || m["name"] == vlanIfName(li.VLAN) && m["vlan-id"] == li.VLAN && m["interface"] == li.VLANParent
+			}
+			if !ok {
+				bad = append(bad, fmt.Sprintf("VLAN-Schnittstelle %s (VLAN %s auf %s) fehlt", vlanIfName(li.VLAN), li.VLAN, li.VLANParent))
+			}
 		}
 	}
 	if len(bad) > 0 {

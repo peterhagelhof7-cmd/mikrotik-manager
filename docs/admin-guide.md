@@ -196,8 +196,17 @@ Im WLAN-Dialog bei Geräten mit `wireless`: **Umstellung prüfen**. Möglich nur
 Das WLAN des Geräts ist dabei ca. 5 Minuten aus; das Gerät braucht Internetzugang.
 Scheitert die Paket-Installation, installiert der Manager `wireless` wieder und spielt
 das Backup ein. Bricht die Umstellung ab, setzt ein erneuter Start an der richtigen
-Stelle fort. Abgelehnt wird bei Station-/WDS-Modus, VLAN-Modus, EAP/RADIUS/WEP,
-CAPsMAN und zu wenig Flash.
+Stelle fort. Abgelehnt wird bei Station-/WDS-Modus, EAP/RADIUS/WEP, CAPsMAN und
+zu wenig Flash.
+
+**WLANs mit VLAN-Tag** (`vlan-mode=use-tag`, z. B. Gästenetz in VLAN 178 an einer
+Bridge ohne VLAN-Filter): `wifi-qcom-ac` kann an der WLAN-Schnittstelle nicht
+taggen. Der Manager legt deshalb eine VLAN-Schnittstelle `vlan178` auf der
+bisherigen Bridge und eine eigene Bridge `bridge-vlan178` an, in die `vlan178` und
+diese WLANs kommen. Die bisherige Bridge bleibt unverändert (kein VLAN-Filter), auf
+dem Ethernet-Port kommt VLAN 178 weiter getaggt an. Abgelehnt wird, wenn die Bridge
+schon einen VLAN-Filter hat, das VLAN schon als Schnittstelle existiert, die Namen
+vergeben sind oder das WLAN an keiner Bridge hängt.
 
 ## 7. Zentrale WLAN-Verwaltung
 

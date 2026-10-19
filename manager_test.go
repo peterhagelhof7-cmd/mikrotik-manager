@@ -259,6 +259,62 @@ func TestWifiScript(t *testing.T) {
 	}
 }
 
+// wireless vlan-mode=use-tag (Gästenetz in VLAN 178, Bridge ohne VLAN-Filter)
+// → VLAN-Schnittstelle auf bridge1 + eigene Bridge, bridge1 bleibt unverändert.
+func TestWifiScriptUseTag(t *testing.T) {
+	mig := &migration{ifs: []legacyIf{
+		{Name: "wlan1", MAC: "AA:00:00:00:00:01", SSID: "Heim", Band: "2ghz-n", Bridge: "bridge1"},
+		{Name: "wlan3", Master: "wlan1", SSID: "Gast", Bridge: "bridge-vlan178", VLAN: "178", VLANParent: "bridge1"},
+		{Name: "wlan2", MAC: "AA:00:00:00:00:02", SSID: "Heim", Band: "5ghz-ac", Bridge: "bridge1"},
+		{Name: "wlan4", Master: "wlan2", SSID: "Gast", Bridge: "bridge-vlan178", VLAN: "178", VLANParent: "bridge1"},
+	}}
+	radios := []wifiRadio{
+		{Name: "wifi1", MAC: "AA:00:00:00:00:02", Bands: "5ghz-ac:20mhz"},
+		{Name: "wifi2", MAC: "AA:00:00:00:00:01", Bands: "2ghz-n:20mhz"},
+	}
+	script, names, err := wifiScript(mig, radios)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`:if ([:len [/interface bridge find name="bridge-vlan178"]] = 0) do={ /interface bridge add name="bridge-vlan178" comment="mikrotik-manager" }`,
+		`/interface vlan add name="vlan178" interface="bridge1" vlan-id=178 comment="mikrotik-manager"`,
+		`/interface bridge port add bridge="bridge-vlan178" interface="vlan178"`,
+		`add bridge="bridge-vlan178" interface="` + names["wlan3"] + `"`,
+		`add bridge="bridge-vlan178" interface="` + names["wlan4"] + `"`,
+		`add bridge="bridge1" interface="wifi2"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("fehlt: %s\n--- Skript:\n%s", want, script)
+		}
+	}
+	if strings.Count(script, "/interface vlan add") != 1 {
+		t.Errorf("VLAN 178 sollte genau einmal angelegt werden:\n%s", script)
+	}
+	if strings.Contains(script, "vlan-filtering") || strings.Contains(script, "pvid=") {
+		t.Errorf("bridge1 darf nicht verändert werden:\n%s", script)
+	}
+}
+
+func TestCheckUseTag(t *testing.T) {
+	bp := map[string]string{"bridge": "bridge1"}
+	br := map[string]map[string]string{"bridge1": {"vlan-filtering": "false"}}
+	if b := checkUseTag("wlan3", "178", bp, br, nil, map[string]bool{"bridge1": true}); b != "" {
+		t.Fatalf("sollte gehen: %s", b)
+	}
+	for name, b := range map[string]string{
+		"VLAN-ID":     checkUseTag("wlan3", "1", bp, br, nil, nil),
+		"ohne Bridge": checkUseTag("wlan3", "178", nil, br, nil, nil),
+		"VLAN-Filter": checkUseTag("wlan3", "178", bp, map[string]map[string]string{"bridge1": {"vlan-filtering": "true"}}, nil, nil),
+		"vorhanden":   checkUseTag("wlan3", "178", bp, br, []map[string]string{{"name": "gast", "vlan-id": "178"}}, nil),
+		"Name":        checkUseTag("wlan3", "178", bp, br, nil, map[string]bool{"bridge-vlan178": true}),
+	} {
+		if b == "" {
+			t.Errorf("%s: sollte gesperrt sein", name)
+		}
+	}
+}
+
 func TestMigState(t *testing.T) {
 	p := &Poller{cfg: Config{DataDir: t.TempDir()}}
 	if p.loadMigState("A") != nil || p.lastMigBackup("A") != "" {

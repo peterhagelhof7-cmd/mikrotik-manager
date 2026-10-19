@@ -352,3 +352,25 @@ umstellen, die WLAN-Konfiguration wird dabei NICHT übernommen).
   DST-fest wie das nächtliche Backup. Läuft noch ein Job (Backup), bis 2 h warten.
 - Ergebnis je Gerät (letzter Schritt des Jobs) wird mit Zeitpunkt gespeichert und im
   Tab angezeigt; „Jetzt ausführen“ startet einen Lauf von Hand.
+
+## 2026-10-19 – Umstellung mit wireless vlan-mode=use-tag
+
+- Anlass: AP mit Gästenetz (virtuelle WLANs auf beiden Funkteilen) in VLAN 178 per
+  `vlan-mode=use-tag`, Bridge ohne VLAN-Filter. Umstellung war gesperrt.
+- `wifi-qcom-ac` kann nicht an der WLAN-Schnittstelle taggen (MikroTik-Doku:
+  „802.11ac chipsets do not support this type of VLAN tagging“, kein
+  `datapath vlan-id` für diese Geräte). VLAN geht nur über die Bridge.
+- Entscheidung (User): **eigene Bridge statt VLAN-Filter** – `vlanN` auf der
+  bisherigen Bridge + `bridge-vlanN` mit `vlanN` und den WLANs. Die bisherige
+  Bridge bleibt unverändert (kein Filter, andere getaggte VLANs laufen weiter
+  durch, HW-Offload bleibt). VLAN-Schnittstelle bewusst auf der Bridge, nicht auf
+  dem Ethernet-Port (Port gehört zur Bridge, VLAN-Schnittstelle auf einem
+  Bridge-Port bekommt die Pakete nicht zuverlässig).
+- Skript legt Bridge/VLAN/Port mit `:if` an → erneutes Einspielen doppelt nichts.
+  Prüfung nach dem Einspielen: VLAN-Schnittstelle mit ID und Elternbridge.
+- Gesperrt bleibt: Bridge schon mit VLAN-Filter, VLAN-ID schon als Schnittstelle
+  vorhanden, Namen `vlanN`/`bridge-vlanN` vergeben, WLAN an keiner Bridge, ein VLAN
+  an zwei Bridges, `use-service-tag`.
+- Offen: Die zentrale WLAN-Verwaltung kennt diesen Aufbau nicht; „VLAN je SSID“
+  würde die WLANs auf die Haupt-Bridge mit VLAN-Filter umbauen. Live noch nicht
+  ausgeführt.
