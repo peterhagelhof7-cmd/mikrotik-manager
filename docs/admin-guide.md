@@ -109,6 +109,11 @@ lässt sich als Lesezeichen speichern; „← Geräte“ oder Zurück im Browser
   deaktiviert; Tabelle mit SSID, Band, Funk (Breite/Kanal; virtuelle WLANs „wie
   Funkteil“), Verschlüsselung, VLAN (PVID am Bridge-Port), Bridge und den verbundenen
   Clients zum Aufklappen. Nur Anzeige, ändern über den Knopf „WLAN“. Jede Minute neu.
+  Spalte **Zustand**: was RouterOS selbst meldet (`/interface wifi|wireless monitor once`),
+  z. B. „sendet“, „Radar-Prüfung (DFS) läuft“, „kein erlaubter Kanal verfügbar“, „Funkteil
+  sendet nicht“ (bei virtuellen WLANs), mit tatsächlichem Kanal und Sendeleistung; der
+  Rohtext steht im Tooltip. Darunter aufklappbar die letzten WLAN-Meldungen aus dem
+  Geräteprotokoll (`/log`, Themen wireless/wifi/caps – RouterOS hält es im Speicher).
 - **Konfig-Historie:**
   - *über den Manager:* wer was ausgelöst hat (Umbenennen, Zugangsdaten, Update,
     Neustart, WLAN, Rollback, Standort …) und das Ergebnis jedes Jobs; „Manager“ =

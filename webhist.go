@@ -189,3 +189,14 @@ func (w *web) setLocation(rw http.ResponseWriter, r *http.Request) {
 	w.st.save()
 	writeJSON(rw, map[string]any{"ok": true, "msg": "Standort gespeichert"})
 }
+
+func (w *web) deviceWlanStatus(rw http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+	st, err := w.pl.WlanStatus(ctx, r.PathValue("id"))
+	if err != nil {
+		http.Error(rw, "WLAN-Zustand lesen: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(rw, st)
+}

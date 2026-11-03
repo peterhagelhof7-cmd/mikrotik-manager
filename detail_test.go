@@ -181,3 +181,28 @@ func TestUIUniqueIDs(t *testing.T) {
 		seen[m[1]] = true
 	}
 }
+
+func TestBuildWlanStatus(t *testing.T) {
+	names := []string{"wifi1", "wifi2", "wifi1-v1"}
+	mon := []map[string]string{
+		{"name": "wifi1", "state": "no available channels"},
+		{"name": "wifi2", "state": "running-ap", "channel": "2412/ax", "registered-peers": "3", "tx-power": "17"},
+	}
+	lg := []map[string]string{
+		{"time": "18:44:10", "topics": "system,info", "message": "router rebooted"},
+		{"time": "18:44:30", "topics": "wireless,info", "message": "wifi1: no available channels"},
+		{"time": "18:45:00", "topics": "wifi,debug", "message": "wifi2: started"},
+	}
+	ifs, logs := buildWlanStatus("wifi", names, mon, lg)
+	if len(ifs) != 3 || ifs[0].State != "no available channels" || ifs[1].Peers != "3" || ifs[1].Channel != "2412/ax" || ifs[2].State != "" {
+		t.Fatalf("Schnittstellen: %+v", ifs)
+	}
+	if len(logs) != 2 || logs[0].Message != "wifi2: started" || logs[1].Topics != "wireless,info" {
+		t.Fatalf("Protokoll: %+v", logs)
+	}
+	// wireless-Paket: andere Feldnamen, Antworten ohne name in numbers-Reihenfolge
+	ifs, _ = buildWlanStatus("wireless", []string{"wlan1", "wlan2"}, []map[string]string{{"status": "running-ap", "registered-clients": "1"}, {"status": "disabled"}}, nil)
+	if ifs[0].State != "running-ap" || ifs[0].Peers != "1" || ifs[1].State != "disabled" {
+		t.Fatalf("wireless: %+v", ifs)
+	}
+}

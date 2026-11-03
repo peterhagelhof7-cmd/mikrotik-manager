@@ -1152,6 +1152,28 @@ async function loadHist() {
 }
 // WLAN-Schnittstellen (nur Anzeige; ändern über den Knopf „WLAN“)
 const wlOpen = new Set();
+// RouterOS-Zustand (monitor) → kurze Erklärung; Rohtext steht im Tooltip.
+function wlState(raw, x) {
+  const s = (raw || '').toLowerCase();
+  if (!raw) return x.disabled ? ['mute', 'deaktiviert'] : ['mute', 'unbekannt'];
+  if (s.startsWith('running')) return ['ok', 'sendet'];
+  if (s.includes('disabled')) return ['mute', 'deaktiviert'];
+  if (s.includes('cac') || s.includes('radar') || s.includes('dfs')) return ['warn', 'Radar-Prüfung (DFS) läuft – sendet danach'];
+  if (s.includes('no available channel') || s.includes('no-channel') || s.includes('no channel')) return ['bad', 'kein erlaubter Kanal verfügbar (Land/Breite/DFS-Einstellung prüfen)'];
+  if (s.includes('search') || s.includes('scan')) return ['warn', 'sucht Kanal'];
+  if (s.includes('inactive') || s.includes('not running') || s.includes('stopped')) return ['bad', 'inaktiv'];
+  if (s.includes('master')) return ['bad', 'Funkteil sendet nicht'];
+  return ['warn', raw];
+}
+function wlLogHtml(st) {
+  if (!st) return '';
+  if (st.error) return `<div class="hint" style="color:#f0a0a0;margin-top:10px">WLAN-Zustand nicht lesbar: ${esc(st.error)}</div>`;
+  const l = st.log || [];
+  return `<details style="margin-top:10px" ${l.length ? '' : ''}><summary class="hint">WLAN-Meldungen aus dem Geräteprotokoll (${l.length}${l.length === 40 ? ', neueste' : ''})</summary>
+    ${st.logError ? `<div class="hint" style="color:#f0a0a0">Protokoll nicht lesbar: ${esc(st.logError)}</div>` : l.length
+      ? `<div class="wrap"><table><thead><tr><th>Zeit</th><th>Thema</th><th>Meldung</th></tr></thead><tbody>${l.map(x => `<tr><td class="mute" style="white-space:nowrap">${esc(x.time)}</td><td class="mute">${esc(x.topics)}</td><td>${esc(x.message)}</td></tr>`).join('')}</tbody></table></div>`
+      : '<div class="hint">keine WLAN-Meldungen im Protokoll (RouterOS hält es im Speicher; nach einem Neustart beginnt es neu)</div>'}</details>`;
+}
 function wlClass(x) {
   if (x.disabled) return 'wl dis';
   if (!x.running) return 'wl';
@@ -1162,11 +1184,13 @@ async function loadWlan(quiet) {
   if (!d || !d.wirelessPkg) { $('#dWlanCard').hidden = true; return; }
   $('#dWlanCard').hidden = false;
   try {
-    const r = await fetch(`/api/devices/${encodeURIComponent(id)}/wlan`, {cache: 'no-store'});
+    const [r, rs] = await Promise.all([fetch(`/api/devices/${encodeURIComponent(id)}/wlan`, {cache: 'no-store'}),
+      fetch(`/api/devices/${encodeURIComponent(id)}/wlan/status`, {cache: 'no-store'}).catch(e => ({ok: false, text: async () => e.message}))]);
     if (!r.ok) throw new Error(await r.text());
     const info = await r.json();
+    const stat = rs.ok ? await rs.json() : {error: await rs.text()};
     if (id !== detailId) return;
-    detailCache.wlan = info;
+    detailCache.wlan = info; detailCache.wlanStatus = stat;
     $('#dWlanAt').textContent = 'Stand ' + new Date().toLocaleTimeString('de-DE') + ' · jede Minute neu';
     renderWlan();
   } catch (e) { if (!quiet || !detailCache.wlan) $('#dWlan').innerHTML = `<div class="hint" style="color:#f0a0a0">WLAN nicht lesbar: ${esc(e.message)}</div>`; }
@@ -1180,18 +1204,23 @@ function renderWlan() {
   const radio = x => x.radio ? [x.radio.width ? x.radio.width + ' MHz' : '', x.radio.freq && x.radio.freq !== 'auto' ? (typeof chLabel === 'function' ? chLabel(+x.radio.freq) : x.radio.freq + ' MHz') : 'Kanal automatisch'].filter(Boolean).join(' · ') : '<span class="mute">wie Funkteil ' + esc(x.master || '') + '</span>';
   $('#dWlan').innerHTML = `<div class="hint">Paket <b>${esc(info.pkg)}</b>${info.country ? ' · Land ' + esc(cap(info.country)) : ''}${managed ? ' · <span class="badge b-ok" title="Das WLAN dieses Geräts wird zentral verwaltet.">zentral verwaltet</span>' : ''}</div>
     <div class="portrow">${ifs.map(x => `<div class="port ${wlClass(x)}" title="${esc(x.name + ': ' + (x.ssid || '–') + ' · ' + (x.band || '') + ' · ' + (x.disabled ? 'deaktiviert' : x.running ? x.clients + ' Clients' : 'sendet nicht'))}"><i></i>${esc(x.name)}<span class="ssid">${esc(x.ssid || '')}</span></div>`).join('')}</div>
-    <div class="wrap"><table><thead><tr><th>Schnittstelle</th><th>SSID</th><th>Band</th><th>Funk</th><th>Verschlüsselung</th><th>VLAN</th><th>Bridge</th><th>Clients</th></tr></thead><tbody>${ifs.map(x => {
+    <div class="wrap"><table><thead><tr><th>Schnittstelle</th><th>Zustand</th><th>SSID</th><th>Band</th><th>Funk</th><th>Verschlüsselung</th><th>VLAN</th><th>Bridge</th><th>Clients</th></tr></thead><tbody>${ifs.map(x => {
       const mine = cl.filter(c => c.interface === x.name);
+      const ms = ((detailCache.wlanStatus || {}).interfaces || []).find(m => m.name === x.name);
+      const [cls, txt] = ms ? wlState(ms.state, x) : ['mute', '–'];
+      const color = {ok: 'var(--ok)', warn: 'var(--warn)', bad: '#f0a0a0', mute: 'var(--muted)'}[cls];
       const open = wlOpen.has(x.name);
       return `<tr><td><b>${esc(x.name)}</b>${x.master ? `<div class="hint">virtuell auf ${esc(x.master)}</div>` : ''}${x.chip ? `<div class="hint">${esc(x.chip)}</div>` : ''}</td>
+        <td><span style="color:${color}" title="RouterOS meldet: ${esc(ms ? ms.state || '–' : 'nicht gelesen')}">${esc(txt)}</span>${ms && ms.channel ? `<div class="hint">Kanal ${esc(ms.channel)}${ms.txPower ? ' · ' + esc(ms.txPower) + ' dBm' : ''}</div>` : ''}</td>
         <td>${esc(x.ssid || '–')}${x.hidden ? ' <span class="badge b-mute" title="SSID wird nicht ausgestrahlt">versteckt</span>' : ''}</td>
         <td>${esc(x.band || '')}</td><td>${radio(x)}</td>
         <td>${x.auth ? esc(typeof AUTH_NAMES !== 'undefined' && AUTH_NAMES[normAuth(x.auth)] || x.auth) : '<span class="badge b-warn">offen</span>'}</td>
         <td>${x.vlan ? esc(String(x.vlan)) : '<span class="mute">–</span>'}</td><td>${esc(x.bridge || '–')}</td>
         <td>${x.disabled ? '<span class="mute">deaktiviert</span>' : !x.running ? '<span class="mute">sendet nicht</span>' : mine.length ? `<button class="small" data-dx="wlcl" data-if="${esc(x.name)}" title="Klappt die verbundenen Clients dieser Schnittstelle auf bzw. zu. Ändert nichts.">${open ? '▾' : '▸'} ${mine.length}</button>` : esc(String(x.clients || 0))}</td></tr>`
-        + (open && mine.length ? `<tr class="sub"><td></td><td colspan="7"><div class="wrap" style="margin:0 0 6px">${clientsTable(mine.slice().sort((a, b) => (b.signal || 0) - (a.signal || 0)), false)}</div></td></tr>` : '');
+        + (open && mine.length ? `<tr class="sub"><td></td><td colspan="8"><div class="wrap" style="margin:0 0 6px">${clientsTable(mine.slice().sort((a, b) => (b.signal || 0) - (a.signal || 0)), false)}</div></td></tr>` : '');
     }).join('')}</tbody></table></div>
-    <div class="hint" style="margin-top:6px">Clients laut letzter Abfrage des Managers (jede Minute). Ändern über den Knopf „WLAN“ oben.</div>`;
+    <div class="hint" style="margin-top:6px">Zustand laut RouterOS (<span class="mono">monitor</span>), Clients laut letzter Abfrage des Managers (jede Minute). Ändern über den Knopf „WLAN“ oben.</div>
+    ${wlLogHtml(detailCache.wlanStatus)}`;
 }
 $('#detail').addEventListener('click', async e => {
   const b = e.target.closest('button[data-dx]'); if (!b) return;

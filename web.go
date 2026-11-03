@@ -135,6 +135,7 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 	mux.Handle("GET /api/devices/{id}/ports", w.auth(http.HandlerFunc(w.devicePorts)))
 	mux.Handle("GET /api/devices/{id}/files", w.auth(http.HandlerFunc(w.deviceFiles)))
 	mux.Handle("GET /api/devices/{id}/history", w.auth(http.HandlerFunc(w.deviceHistory)))
+	mux.Handle("GET /api/devices/{id}/wlan/status", w.auth(http.HandlerFunc(w.deviceWlanStatus)))
 	mux.Handle("POST /api/devices/{id}/location", w.auth(w.rec("Standort geändert", http.HandlerFunc(w.setLocation))))
 	return mux
 }
