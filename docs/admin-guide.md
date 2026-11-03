@@ -302,6 +302,37 @@ WLAN-Dialog, Kennzeichen „zentral“ in der Liste), damit sie nicht auseinande
 
 > Tipp: Neue Vorgaben zuerst mit nur **einem** ausgewählten Gerät ausrollen.
 
+### 7.x Meshlink (APs ohne Netzwerkkabel)
+
+Karte **Meshlink** in der zentralen WLAN-Verwaltung: Access Points, die nur Strom haben
+(Netzteil oder PoE-Injektor ohne Datenkabel), hängen sich automatisch per WLAN an einen AP mit
+Kabel und reichen dessen Netz weiter – alle WLANs und VLANs, auch den Verwaltungszugang
+(WireGuard-Tunnel zum Manager).
+
+- **Automatisch, ohne Rollen:** Jeder verwaltete AP bekommt auf seinem 5-GHz-Funkteil
+  `mm-mesh-ap` (verstecktes WLAN, nimmt Knoten an) und `mm-mesh-sta` (Station im Modus
+  `station-bridge`) sowie Skript und Zeitplan `mm-meshlink`. Das Skript prüft alle 30 s den
+  Link an **ether1**: kein Link (20 s bestätigt) → Station an, Angebot aus; Link wieder da
+  (20 s bestätigt) → zurück. Umschalten dauert ca. 20–50 s. Ein Knoten nimmt selbst keine
+  Knoten an – es gibt nur einen Funksprung, keine Schleifen.
+- **Voraussetzung:** ein **fester 5-GHz-Kanal** unter „Funk“ – alle APs müssen auf demselben
+  Kanal senden (die Station hängt am selben Funkteil und kann den Kanal nicht wechseln). Ohne
+  festen Kanal sperrt der Manager das Ausrollen. Empfehlung: 36–48 (5180–5240 MHz) ohne
+  Radar-Prüfung; DFS-Kanäle kosten nach jedem Neustart eine Minute und können bei Radar
+  den Meshlink unterbrechen.
+- **Nur wifi-Paket** (wifi-qcom, wifi-qcom-ac; getestet cAP ax ↔ wAP ac gemischt). Geräte mit
+  altem wireless-Paket bekommen einen Hinweis und kein Meshlink. Gerät braucht einen Port
+  `ether1` und eine Bridge.
+- **SSID und Passwort** erzeugt der Manager beim Speichern (versteckt, 32 Zeichen). Abschalten entfernt beim
+  nächsten Ausrollen alles wieder – außer bei einem Gerät, das gerade nur über Meshlink
+  angebunden ist (gesperrt, sonst wäre es weg).
+- **Ausrollen an Knoten:** läuft wie immer lokal auf dem Gerät mit Rückweg-Backup und
+  Wächter; der Knoten ist dabei kurz weg und verbindet sich danach selbst wieder.
+- **Detailseite:** Zeilen `mm-mesh-ap` („Meshlink-Angebot“) und `mm-mesh-sta`
+  („Meshlink-Station … verbunden mit <AP-MAC>“), Zustand „verbunden (Meshlink aktiv)“.
+- **Durchsatz:** Ein Knoten teilt sein 5-GHz-Funkteil zwischen Meshlink und Clients – etwa
+  die Hälfte des Durchsatzes eines AP mit Kabel.
+
 ## 8. Das Sicherheitsnetz bei Änderungen
 
 Bridge, DHCP-Client, WLAN-Änderungen und das Ausrollen laufen so ab:

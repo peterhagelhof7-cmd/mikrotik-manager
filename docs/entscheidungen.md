@@ -437,3 +437,33 @@ umstellen, die WLAN-Konfiguration wird dabei NICHT übernommen).
   Verlauf + Middleware + Begrenzung, keine doppelten ids in der Oberfläche).
   Oberfläche mit Mock-API per Headless-Chrome geprüft. Am echten Gerät (PoE-Switch)
   noch nicht gelesen.
+
+## 2026-11-03 – Meshlink: APs ohne Kabel automatisch per WLAN anbinden
+
+Vorher am echten Gerät getestet (cAP ax ↔ wAP ac am CRS, Port abgeschaltet bei weiter
+laufendem PoE, beide Richtungen; Protokolle in Nextcloud `Claude Projekte/mikrotik-manager/
+meshlink-test-20261103`).
+
+- **Automatisch statt Rollen** (User-Vorgabe): alle APs bekommen Angebot *und* Station; ein
+  Wächter-Skript auf dem Gerät entscheidet am Link von ether1 – funktioniert ohne Manager.
+  Ein Knoten schaltet sein Angebot ab → nur ein Funksprung, keine Schleifen; RSTP der
+  Bridges als zweite Sicherung.
+- **station-bridge** statt station-wds: transparente L2-Brücke inkl. VLANs, von MikroTik
+  empfohlen; im Test auch zwischen wifi-qcom und wifi-qcom-ac.
+- **Fester gemeinsamer 5-GHz-Kanal ist Pflicht** – die virtuelle Station kann den Kanal des
+  Funkteils nicht wechseln (Test: verschiedene Kanäle → nicht einmal ein Verbindungsversuch).
+  Prüfung zur Planzeit (gesperrt mit Begründung), nicht schon beim Speichern, weil der
+  Kanal aus einer anderen Quelle kommen kann.
+- **Entprellung per `:delay`** im selben Lauf (Zeitplan 30 s, zweimal 10 s nachprüfen):
+  globale Variablen überleben Läufe aus dem Zeitplan nicht (im Test gesehen).
+- **Skript nur ASCII**, Policy immer mitsetzen (REST-PATCH ohne policy setzte sie leer).
+- **Gegenprobe prüft die Definition, nicht den Laufzeit-Zustand:** ob gerade Angebot oder
+  Station aktiv ist, ist kein Abweichen.
+- **Abschalten gesperrt**, solange ein Gerät nur über Meshlink hängt.
+- Nebenbei behoben: Das Zurücksetzen entfernte virtuelle WLANs ohne deren Bridge-Ports →
+  verwaiste Port-Einträge (`*ID`), an die sich neue Schnittstellen mit gleicher ID unbemerkt
+  anhängten (am wAP gesehen). Jetzt erst Bridge-Port, dann Schnittstelle.
+- Tests: `meshlink_test.go` (gesperrt ohne festen Kanal/ether1, Skript-Inhalt und
+  Reihenfolge, Noop mit/ohne aktive Station, veraltetes Skript, VLAN über Meshlink,
+  wireless-Paket, Abschalten inkl. Sperre, erzeugte Zugangsdaten). Am echten Gerät über den
+  Manager noch nicht ausgerollt.

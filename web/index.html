@@ -160,6 +160,12 @@ pre.diff .add{color:#7fdca4}pre.diff .del{color:#f0a0a0}pre.diff .gap{color:var(
         <select id="cCountry" style="width:auto" title="Land des Standorts für alle Geräte. Bestimmt die erlaubten Kanäle und die maximale Sendeleistung – muss dem tatsächlichen Standort entsprechen."></select>
         <button id="cRec" title="Trägt die empfohlenen Funkwerte ein: Deutschland; 2,4 GHz 20 MHz mit Kanalplan 1/6/11 reihum; 5 GHz 80 MHz, Kanal automatisch ohne 10-Minuten-Radarkanäle; Verschlüsselung WPA2/WPA3. Ändert nichts, erst „Speichern“ übernimmt.">Empfehlung eintragen</button></div>
     </div>
+    <div class="card" id="cMeshCard">
+      <h3>Meshlink</h3>
+      <div class="hint">Access Points ohne Netzwerkkabel (nur Netzteil oder PoE-Injektor) hängen sich automatisch per WLAN an einen AP mit Kabel und reichen dessen Netz weiter – alle WLANs und VLANs. Jeder AP prüft selbst alle 30 s, ob an <b>ether1</b> ein Link ist: ohne Link verbindet er sich nach ca. 20–50 s über Meshlink, mit Link schaltet er zurück. Niemand muss eine „Wurzel“ wählen – jeder AP mit Kabel nimmt Knoten an. <b>Voraussetzung: fester 5-GHz-Kanal</b> unter „Funk“ (alle APs auf demselben Kanal), am besten 36–48 ohne Radar-Prüfung. Nur mit dem neuen wifi-Paket; ein Knoten teilt sein 5-GHz-Funkteil zwischen Meshlink und Clients (etwa halber Durchsatz).</div>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="cMesh" style="width:auto" title="Richtet beim nächsten Ausrollen auf allen ausgewählten Geräten Meshlink ein (verstecktes WLAN + Station + Wächter-Skript); ohne Haken wird es beim Ausrollen entfernt. Wird erst mit „Speichern“ übernommen."><b>Meshlink aktivieren</b></label>
+      <div class="hint" id="cMeshInfo" style="margin-top:6px"></div>
+    </div>
     <div class="btns" style="justify-content:flex-start">
       <button class="primary" id="cSave" title="Speichert die zentrale Konfiguration auf dem Manager und prüft danach jedes ausgewählte Gerät: entspricht es, oder was weicht ab? Ändert nichts an den Geräten.">Speichern &amp; prüfen</button>
       <span id="cMsg" class="hint"></span>
@@ -544,7 +550,24 @@ function renderCentral(c) {
   $('#cCountry').innerHTML = countryOpts(c.country);
   $('#cImportDev').innerHTML = devs.map(d => opt(d.id, '', d.identity)).join('');
   $('#cBadge').innerHTML = c.enabled ? '<span class="badge b-ok">aktiv</span>' : '';
+  $('#cMesh').checked = !!(c.meshlink || {}).enabled;
+  meshInfo();
 }
+// Meshlink: Hinweis zum festen 5-GHz-Kanal und zur erzeugten SSID
+function meshInfo() {
+  const on = $('#cMesh').checked, ml = (central || {}).meshlink || {};
+  const ch = $('#cRadio tr[data-radio=radio5] [data-c=channel]');
+  const auto = ch && ch.value === 'auto';
+  const tpl = typeof tplAllowed === 'function' && tplAllowed() && $('#cUseTpl') && $('#cUseTpl').checked && !$('#cOwnRadio').checked;
+  let h = '';
+  if (on && tpl) h += '<div style="color:var(--warn)">⚠ Land und Funk kommen aus der Kunden-Vorlage – dort muss 5 GHz einen festen Kanal haben, sonst wird das Ausrollen gesperrt.</div>';
+  else if (on && auto) h += '<div style="color:var(--warn)">⚠ 5 GHz steht auf „automatisch“ – für Meshlink unter „Funk“ einen festen Kanal wählen (am besten 36–48), sonst wird das Ausrollen gesperrt.</div>';
+  if (on && ml.ssid) h += `Versteckte Meshlink-SSID <span class="mono">${esc(ml.ssid)}</span>, Passwort vom Manager erzeugt (32 Zeichen). Auf jedem Gerät: <span class="mono">mm-mesh-ap</span> (nimmt Knoten an), <span class="mono">mm-mesh-sta</span> (verbindet sich ohne Kabel), Skript und Zeitplan <span class="mono">mm-meshlink</span>.`;
+  else if (on) h += 'SSID und Passwort erzeugt der Manager beim Speichern.';
+  $('#cMeshInfo').innerHTML = h;
+}
+$('#cMesh').onchange = meshInfo;
+$('#cRadio').addEventListener('change', meshInfo);
 function collectCentral() {
   const radio = key => {
     const tr = $(`#cRadio tr[data-radio=${key}]`);
@@ -560,6 +583,7 @@ function collectCentral() {
       auth: tr.querySelector('[data-c=auth]').value, bands: tr.querySelector('[data-c=bands]').value, hidden: tr.querySelector('[data-c=hidden]').checked,
       vlan: parseInt(tr.querySelector('[data-c=vlan]').value, 10) || 0})),
     radio2: radio('radio2'), radio5: radio('radio5'),
+    meshlink: {...((central || {}).meshlink || {}), enabled: $('#cMesh').checked},
   };
 }
 async function loadCentral() {
@@ -583,7 +607,7 @@ $('#cImport').onclick = async () => {
     if (!r.ok) throw new Error(await r.text());
     const info = await r.json(), nets = {};
     for (const x of info.interfaces) {
-      if (!x.ssid || x.disabled) continue;
+      if (!x.ssid || x.disabled || x.name.startsWith('mm-mesh')) continue;
       const n = nets[x.ssid] ||= {ssid: x.ssid, passphrase: x.passphrase, auth: CAUTH.includes(normAuth(x.auth)) ? normAuth(x.auth) : CAUTH[0], hidden: !!x.hidden, b: new Set()};
       n.b.add(x.band);
     }
@@ -1157,6 +1181,7 @@ function wlState(raw, x) {
   const s = (raw || '').toLowerCase();
   if (!raw) return x.disabled ? ['mute', 'deaktiviert'] : ['mute', 'unbekannt'];
   if (s.startsWith('running')) return ['ok', 'sendet'];
+  if (s === 'authorized' || s.startsWith('connected')) return ['ok', x.name === 'mm-mesh-sta' ? 'verbunden (Meshlink aktiv)' : 'verbunden'];
   if (s.includes('disabled')) return ['mute', 'deaktiviert'];
   if (s.includes('cac') || s.includes('radar') || s.includes('dfs')) return ['warn', 'Radar-Prüfung (DFS) läuft – sendet danach'];
   if (s.includes('no available channel') || s.includes('no-channel') || s.includes('no channel')) return ['bad', 'kein erlaubter Kanal verfügbar (Land/Breite/DFS-Einstellung prüfen)'];
@@ -1178,7 +1203,7 @@ function wlMon(x) { return ((detailCache.wlanStatus || {}).interfaces || []).fin
 function wlSending(x) {
   if (x.disabled) return false;
   const ms = wlMon(x);
-  if (ms && ms.state) return ms.state.toLowerCase().startsWith('running');
+  if (ms && ms.state) { const st = ms.state.toLowerCase(); return st.startsWith('running') || st === 'authorized' || st.startsWith('connected'); }
   return x.running || x.clients > 0; // ohne Zustand (z. B. nicht lesbar): bestes Wissen
 }
 function wlClass(x) {
@@ -1217,7 +1242,7 @@ function renderWlan() {
       const [cls, txt] = ms ? wlState(ms.state, x) : ['mute', '–'];
       const color = {ok: 'var(--ok)', warn: 'var(--warn)', bad: '#f0a0a0', mute: 'var(--muted)'}[cls];
       const open = wlOpen.has(x.name);
-      return `<tr><td><b>${esc(x.name)}</b>${x.master ? `<div class="hint">virtuell auf ${esc(x.master)}</div>` : ''}${x.chip ? `<div class="hint">${esc(x.chip)}</div>` : ''}</td>
+      return `<tr><td><b>${esc(x.name)}</b>${x.name === 'mm-mesh-ap' ? '<div class="hint">Meshlink-Angebot (nimmt APs ohne Kabel an)</div>' : x.name === 'mm-mesh-sta' ? `<div class="hint">Meshlink-Station (nur ohne Etherlink aktiv)${ms && ms.ap ? ' · verbunden mit ' + esc(ms.ap) : ''}</div>` : x.master ? `<div class="hint">virtuell auf ${esc(x.master)}</div>` : ''}${x.chip ? `<div class="hint">${esc(x.chip)}</div>` : ''}</td>
         <td><span style="color:${color}" title="RouterOS meldet: ${esc(ms ? ms.state || '–' : 'nicht gelesen')}">${esc(txt)}</span>${ms && ms.channel ? `<div class="hint">Kanal ${esc(ms.channel)}${ms.txPower ? ' · ' + esc(ms.txPower) + ' dBm' : ''}</div>` : ''}</td>
         <td>${esc(x.ssid || '–')}${x.hidden ? ' <span class="badge b-mute" title="SSID wird nicht ausgestrahlt">versteckt</span>' : ''}</td>
         <td>${esc(x.band || '')}</td><td>${radio(x)}</td>

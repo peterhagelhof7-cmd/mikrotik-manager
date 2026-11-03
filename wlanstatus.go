@@ -17,6 +17,7 @@ type WlanIfStatus struct {
 	Channel string `json:"channel,omitempty"` // tatsächlicher Kanal, z. B. 5180/ax/Ceee
 	TxPower string `json:"txPower,omitempty"`
 	Peers   string `json:"peers,omitempty"` // angemeldete Clients laut monitor
+	AP      string `json:"ap,omitempty"`    // Station (z. B. Meshlink): MAC des APs, mit dem sie verbunden ist
 }
 
 type WlanLog struct {
@@ -103,6 +104,7 @@ func buildWlanStatus(pkg string, names []string, mon, lg []map[string]string) ([
 		if pkg == "wifi" {
 			x.State, x.Channel, x.TxPower = m["state"], m["channel"], m["tx-power"]
 			x.Peers = m["registered-peers"]
+			x.AP = m["ap-address"]
 		} else {
 			x.State, x.Channel, x.TxPower = m["status"], m["channel"], m["tx-power"]
 			x.Peers = m["registered-clients"]

@@ -146,6 +146,7 @@ type wlanState struct {
 	ifs  []*wlanIfc
 	secs map[string]map[string]string // Sicherheitsprofile nach Name
 	cfgs map[string]map[string]string // wifi: Konfigurationsprofile nach Name
+	mesh meshState                    // Meshlink: Skript, Zeitplan, ether1 (meshlink.go)
 }
 
 // --- Funkwerte ---

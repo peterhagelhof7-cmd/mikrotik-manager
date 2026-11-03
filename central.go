@@ -53,7 +53,9 @@ type CentralWLAN struct {
 	Networks []CentralNet `json:"networks"`
 	Radio2   CentralRadio `json:"radio2"`
 	Radio5   CentralRadio `json:"radio5"`
-	Updated  time.Time    `json:"updated"`
+	// Meshlink (meshlink.go): APs ohne Etherlink hängen sich automatisch per WLAN an
+	Meshlink CentralMeshlink `json:"meshlink"`
+	Updated  time.Time       `json:"updated"`
 }
 
 // defaultCentral entspricht der Empfehlung im WLAN-Dialog.
@@ -80,6 +82,7 @@ func (p *Poller) Central() CentralWLAN {
 }
 
 func (p *Poller) SaveCentral(c CentralWLAN) error {
+	fillMeshlink(&c.Meshlink)
 	if err := p.validCentral(&c); err != nil {
 		return err
 	}
@@ -270,6 +273,7 @@ func planCentral(ctx context.Context, cl *routeros.Client, c CentralWLAN, chan2 
 		p.Blocked = "Das Gerät hat keine WLAN-Schnittstellen."
 		return p, nil
 	}
+	s.mesh = readMeshState(ctx, cl)
 	return planCentralState(s, readBridge(ctx, cl), c, chan2)
 }
 
@@ -378,7 +382,7 @@ func planCentralState(s *wlanState, bi bridgeInfo, c CentralWLAN, chan2 string) 
 			}
 		}
 		for _, y := range s.ifs {
-			if y.Master != x.Name {
+			if y.Master != x.Name || isMesh(y.Name) {
 				continue
 			}
 			k := netKey(y.SSID, y.Auth, y.Passphrase, y.Hidden, bi.vlanOf(y.Name))
@@ -405,7 +409,17 @@ func planCentralState(s *wlanState, bi bridgeInfo, c CentralWLAN, chan2 string) 
 		}
 	}
 
-	// VLANs an der Bridge: getaggt auf allen Ethernet-Ports, VLAN-Filter an
+	meshOn, meshDiffs, meshWarn, meshBlocked := planMeshlink(s, bi, c, radios)
+	if meshBlocked != "" {
+		p.Blocked = meshBlocked
+		return p, nil
+	}
+	p.Warn = append(p.Warn, meshWarn...)
+	for _, d := range meshDiffs {
+		diffs = append(diffs, "Meshlink: "+d)
+	}
+
+	// VLANs an der Bridge: getaggt auf allen Ethernet-Ports (mit Meshlink auch dessen Schnittstellen), VLAN-Filter an
 	vlans := centralVLANs(radios)
 	if len(vlans) > 0 {
 		if br == "" {
@@ -417,7 +431,7 @@ func planCentralState(s *wlanState, bi bridgeInfo, c CentralWLAN, chan2 string) 
 			return p, nil
 		}
 	}
-	tagged := strings.Join(bi.ethers, ",")
+	tagged := strings.Join(meshTagged(bi.ethers, meshOn), ",")
 	var bd []string
 	if len(vlans) > 0 && !bi.filtering {
 		bd = append(bd, "VLAN-Filter aus")
@@ -498,7 +512,11 @@ func planCentralState(s *wlanState, bi bridgeInfo, c CentralWLAN, chan2 string) 
 	} else {
 		p.Apply = centralScriptWifi(s, radios, c, br)
 	}
-	p.Apply += centralBridgeScript(bi, radios, vlans)
+	if meshOn || len(meshDiffs) > 0 {
+		p.Apply += meshScriptRos(meshOn, c, meshRadio(radios), bi.name)
+		p.Steps = append(p.Steps, meshlinkSummary(meshOn, c, meshRadio(radios)))
+	}
+	p.Apply += centralBridgeScript(bi, radios, vlans, meshTagged(bi.ethers, meshOn))
 	// p.Undo setzt doChange: Backup auf dem Gerät laden.
 	return p, nil
 }
@@ -539,7 +557,7 @@ func centralVLANs(radios []*centralRadio) []int {
 // centralBridgeScript setzt die PVID der WLAN-Ports und die Bridge-VLANs.
 // Reihenfolge: erst Ports und VLAN-Tabelle, zuletzt den VLAN-Filter einschalten.
 // Eigene (nicht vom Manager angelegte) Bridge-VLANs bleiben unangetastet.
-func centralBridgeScript(bi bridgeInfo, radios []*centralRadio, vlans []int) string {
+func centralBridgeScript(bi bridgeInfo, radios []*centralRadio, vlans []int, tagged []string) string {
 	if bi.name == "" {
 		return ""
 	}
@@ -569,7 +587,7 @@ func centralBridgeScript(bi bridgeInfo, radios []*centralRadio, vlans []int) str
 		b.WriteString(try("/interface bridge vlan remove [find comment=" + q(mmComment) + "]"))
 	}
 	for _, v := range vlans {
-		b.WriteString(fmt.Sprintf("/interface bridge vlan add bridge=%s vlan-ids=%d tagged=%s comment=%s\n", q(bi.name), v, strings.Join(bi.ethers, ","), q(mmComment)))
+		b.WriteString(fmt.Sprintf("/interface bridge vlan add bridge=%s vlan-ids=%d tagged=%s comment=%s\n", q(bi.name), v, strings.Join(tagged, ","), q(mmComment)))
 	}
 	if len(vlans) > 0 && !bi.filtering {
 		b.WriteString("/interface bridge set [find name=" + q(bi.name) + "] vlan-filtering=yes\n")
@@ -582,6 +600,9 @@ func centralScriptWifi(s *wlanState, radios []*centralRadio, c CentralWLAN, br s
 	b.WriteString("# zuruecksetzen\n")
 	for _, y := range s.ifs {
 		if y.Master != "" {
+			// erst den Bridge-Port, sonst bleibt ein verwaister Eintrag (*ID) zurück, an den sich
+			// später eine neue Schnittstelle mit derselben ID unbemerkt anhängt
+			b.WriteString(try("/interface bridge port remove [find interface=" + q(y.Name) + "]"))
 			b.WriteString(try("/interface wifi remove [find name=" + q(y.Name) + "]"))
 		}
 	}
@@ -652,6 +673,9 @@ func centralScriptLegacy(s *wlanState, radios []*centralRadio, c CentralWLAN, br
 	b.WriteString("# zuruecksetzen\n")
 	for _, y := range s.ifs {
 		if y.Master != "" {
+			// erst den Bridge-Port, sonst bleibt ein verwaister Eintrag (*ID) zurück, an den sich
+			// später eine neue Schnittstelle mit derselben ID unbemerkt anhängt
+			b.WriteString(try("/interface bridge port remove [find interface=" + q(y.Name) + "]"))
 			b.WriteString(try("/interface wireless remove [find name=" + q(y.Name) + "]"))
 		}
 	}
