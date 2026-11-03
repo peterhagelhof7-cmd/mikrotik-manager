@@ -510,3 +510,9 @@ Monats; nur erfassen, keine Schwelle; mm und Cloud; noch kein Testgerät.
   ohne Nachbar-Eintrag des AP, Wurzel automatisch/Switch, nicht lesbar, nicht zugeordnet).
   Oberfläche per Mock mit echten Baumdaten aus dem Test. An echten Geräten noch nicht
   angesehen.
+- **Wurzel „Fremdgerät“** (User-Nachtrag): virtuelle Wurzel ohne Ports; Richtung nach oben über
+  den Port, an dem die MAC des Standard-Gateways (aktive Standardroute → ARP) gelernt wird.
+  Vorfahren eines Geräts = Geräte, die es nicht über ihren Uplink sehen; Elternteil = der
+  tiefste Vorfahr; ohne Vorfahren direkt am Fremdgerät. Fehlt die Gateway-Information, werden
+  entstehende Schleifen aufgelöst (Gerät direkt am Fremdgerät) statt endlos zu rechnen.
+- **WLAN-Punkt im Baum** aus `wifi monitor` statt running-Flag (wie auf der Detailseite).

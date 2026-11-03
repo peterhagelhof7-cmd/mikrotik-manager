@@ -121,7 +121,7 @@ pre.diff .add{color:#7fdca4}pre.diff .del{color:#f0a0a0}pre.diff .gap{color:var(
       <div class="hint">MAC-Adressen je Port als Baum: Wurzel ist der Router oder der zentrale Switch, darunter je Port die dort verbundenen Geräte (MAC, IP und Hostname aus ARP/DHCP, VLAN, WLAN) und die weiteren verwalteten Geräte mit ihren Ports. Erkennung über die Nachbarn (MNDP/LLDP) und die MAC-Tabellen der Bridges; was hinter einem unverwalteten Switch hängt, erscheint am Port des nächsten verwalteten Geräts. Nur lesend – „Aktualisieren“ liest alle Geräte live aus (einige Sekunden).</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">
         <label for="nRoot" style="margin:0">Wurzel</label>
-        <select id="nRoot" style="width:auto" title="Gerät oben im Baum – der Router oder der zentrale Switch. „automatisch“ nimmt das Gerät mit den meisten Nachbarn. Die Wahl wird gespeichert."></select>
+        <select id="nRoot" style="width:auto" title="Gerät oben im Baum – der Router oder der zentrale Switch. „automatisch“ nimmt das Gerät mit den meisten Nachbarn; „Fremdgerät“, wenn Router/Switch nicht von MikroTik sind – dann stehen alle verwalteten Geräte eine Stufe darunter. Die Wahl wird gespeichert."></select>
         <button class="primary" id="nLoad" title="Liest MAC-Tabellen, Nachbarn, ARP und DHCP von allen Geräten neu. Ändert nichts.">Aktualisieren</button>
         <input id="nQ" placeholder="Suchen: MAC, IP, Hostname, Port, Gerät" style="flex:1;min-width:220px" title="Filtert den Baum; der Weg zur Fundstelle bleibt sichtbar.">
         <button id="nCsv" title="Lädt die angezeigte Liste als CSV (Gerät, Port, MAC, IP, Hostname, VLAN).">CSV</button>
@@ -1366,8 +1366,8 @@ function netScopeHint() {
 function netOpen() {
   const h = netScopeHint();
   const devs = (data.devices || []).filter(d => typeof inView !== 'function' || (inView(d) && (!NET_CLOUD || centralSite() === null || (d.site || '') === centralSite())));
-  const cur = netData && netData.root && !netData.rootAuto ? netData.root.id : '';
-  $('#nRoot').innerHTML = opt('', cur, 'automatisch') + devs.slice().sort((a, b) => (a.identity || '').localeCompare(b.identity || '')).map(d => opt(d.id, cur, (d.identity || d.ip) + (d.model ? ' – ' + d.model : ''))).join('');
+  const cur = netRootValue();
+  $('#nRoot').innerHTML = opt('', cur, 'automatisch') + opt('@fremd', cur, 'Fremdgerät (Router/Switch eines anderen Herstellers)') + devs.slice().sort((a, b) => (a.identity || '').localeCompare(b.identity || '')).map(d => opt(d.id, cur, (d.identity || d.ip) + (d.model ? ' – ' + d.model : ''))).join('');
   $('#nLoad').disabled = !!h;
   if (h) { $('#nTree').innerHTML = `<div class="hint">${esc(h)}</div>`; netData = null; return; }
   if (!netData) loadNet();
@@ -1382,11 +1382,16 @@ async function loadNet(root) {
     if (!r.ok) throw new Error(await r.text());
     netData = await r.json();
     $('#nMsg').textContent = 'Stand ' + new Date(netData.at).toLocaleTimeString('de-DE');
-    const cur = netData.root && !netData.rootAuto ? netData.root.id : '';
-    $('#nRoot').value = cur;
+    $('#nRoot').value = netRootValue();
     renderNet();
   } catch (e) { $('#nMsg').textContent = '❌ ' + e.message; }
   $('#nLoad').disabled = false;
+}
+// Wert der Wurzel-Auswahl: '' automatisch, '@fremd' Fremdgerät (virtuelle Wurzel ohne ID), sonst Geräte-ID
+function netRootValue() {
+  const t = netData;
+  if (!t || !t.root || t.rootAuto) return '';
+  return t.root.id === '' ? '@fremd' : t.root.id;
 }
 function netMatch(q, ...vals) { return !q || vals.some(v => v && String(v).toLowerCase().includes(q)); }
 function netNode(n, q, path) {
@@ -1399,11 +1404,11 @@ function netNode(n, q, path) {
     if (!macs.length && !kids && !(p.macs || []).length && !(p.children || []).length && q) continue;
     const rows = macs.map(m => `<tr class="nmac"><td class="mono">${esc(m.mac)}</td><td class="mono">${esc(m.ip || '')}</td><td>${esc(m.host || '')}</td><td class="mute">${m.vlan && m.vlan !== '1' ? 'VLAN ' + esc(m.vlan) : ''}</td><td>${m.wireless ? '<span class="badge b-mute">WLAN</span>' : ''}</td></tr>`).join('');
     const total = (p.macs || []).length;
-    ports += `<div class="nport"><span class="dot ${p.link ? 'on' : 'off'}" title="${p.link ? 'Link' : 'kein Link'}"></span><b>${esc(p.name)}</b> <span class="mute">${total ? total + ' MAC' + (total > 1 ? 's' : '') : (p.children || []).length ? '' : '–'}</span>
+    ports += `<div class="nport"><span class="dot ${p.link ? 'on' : 'off'}" title="${p.link ? 'Link bzw. WLAN sendet' : 'kein Link bzw. WLAN sendet nicht'}"></span><b>${esc(p.name || 'direkt angeschlossen')}</b> <span class="mute">${total ? total + ' MAC' + (total > 1 ? 's' : '') : (p.children || []).length ? '' : '–'}</span>
       ${rows ? `<div class="wrap" style="margin:2px 0 0 18px"><table>${rows}</table></div>` : ''}${kids ? `<div class="ntree">${kids}</div>` : ''}</div>`;
   }
   if (q && !hit && !ports) return '';
-  return `<details open><summary><b>${esc(n.identity)}</b> <span class="mute">${esc(n.model || '')}${n.uplink ? ' · Uplink ' + esc(n.uplink) : ''}</span> <a href="#dev/${encodeURIComponent(n.id)}" class="hint" title="Detailseite des Geräts">Details ›</a></summary><div class="ntree">${ports || '<div class="hint">keine Ports mit Einträgen</div>'}</div></details>`;
+  return `<details open><summary><b>${esc(n.identity)}</b> <span class="mute">${esc(n.model || '')}${n.uplink ? ' · Uplink ' + esc(n.uplink) : ''}</span> ${n.id ? `<a href="#dev/${encodeURIComponent(n.id)}" class="hint" title="Detailseite des Geräts">Details ›</a>` : '<span class="hint">nicht verwaltet – Ports unbekannt, darunter alle Geräte ohne verwaltetes Gerät darüber</span>'}</summary><div class="ntree">${ports || '<div class="hint">keine Ports mit Einträgen</div>'}</div></details>`;
 }
 function renderNet() {
   const t = netData; if (!t) return;
@@ -1411,7 +1416,7 @@ function renderNet() {
   let h = '';
   if (!t.root) h = '<div class="hint">Kein Gerät lesbar.</div>';
   else {
-    h = `<div class="hint" style="margin-bottom:8px">Wurzel: <b>${esc(t.root.identity)}</b>${t.rootAuto ? ' (automatisch – oben fest wählen, z. B. den Router)' : ''}</div>` + (netNode(t.root, q, []) || '<div class="hint">keine Treffer</div>');
+    h = `<div class="hint" style="margin-bottom:8px">Wurzel: <b>${esc(t.root.identity)}</b>${t.rootAuto ? ' (automatisch – oben fest wählen, z. B. den Router; ist der Router kein MikroTik: „Fremdgerät“)' : t.root.id === '' ? ' – Richtung nach oben über das Standard-Gateway der Geräte erkannt' : ''}</div>` + (netNode(t.root, q, []) || '<div class="hint">keine Treffer</div>');
   }
   if ((t.unattached || []).length) h += `<h3 style="margin-top:14px">Nicht zugeordnet</h3><div class="hint">Diese Geräte sind lesbar, aber keinem Port im Baum zuzuordnen (kein Nachbar-Eintrag und ihre MAC nirgends gelernt – z. B. anderes Netz oder MNDP aus).</div>` + t.unattached.map(n => `<div>• <b>${esc(n.identity)}</b> <span class="mute">${esc(n.model || '')}</span></div>`).join('');
   if ((t.unreached || []).length) h += `<h3 style="margin-top:14px">Nicht lesbar</h3>` + t.unreached.map(n => `<div>• <b>${esc(n.identity)}</b> <span class="hint" style="color:#f0a0a0">${esc(n.error || '')}</span></div>`).join('');

@@ -21,8 +21,13 @@ import (
 //   - /interface              → eigene MACs der Geräte (Zuordnung MAC → Gerät)
 //   - /ip/arp, DHCP-Leases     → IP und Hostname zu einer MAC
 
+// TopoForeign als Wurzel: ein Fremdgerät (Router/Switch eines anderen Herstellers)
+// steht oben, alle verwalteten Geräte eine Stufe darunter.
+const TopoForeign = "@fremd"
+
 // topoRaw sind die gelesenen Daten eines Geräts.
 type topoRaw struct {
+	Gateways            []string // aktive Standardrouten (Gateway-IP) – für die Richtung „nach oben“
 	ID, Identity, Model string
 	Err                 string
 	OwnMACs             []string
@@ -135,8 +140,9 @@ func BuildTopology(raws []topoRaw, root string) Topology {
 			}
 		}
 	}
+	foreign := root == TopoForeign
 	// Wurzel: vorgegeben, sonst das Gerät mit den meisten Nachbar-Kanten
-	if _, found := byID[root]; !found {
+	if _, found := byID[root]; !found && !foreign {
 		t.RootAuto = true
 		cnt := map[string]int{}
 		for _, e := range edges {
@@ -174,76 +180,81 @@ func BuildTopology(raws []topoRaw, root string) Topology {
 			}
 		}
 	}
-	// Breitensuche: Geräte an ihren Eltern-Port hängen
-	parent := map[string]string{root: ""}
-	parentPort := map[string]string{}
-	queue := []string{root}
-	for len(queue) > 0 {
-		a := queue[0]
-		queue = queue[1:]
-		for _, e := range edges {
-			if e.from == a {
-				if _, seen := parent[e.to]; !seen {
-					parent[e.to], parentPort[e.to] = a, e.port
-					queue = append(queue, e.to)
-				}
-			}
-		}
-	}
-	// Uplink eines Geräts: Port, an dem es den Eltern-Knoten sieht (Nachbar, sonst MAC-Tabelle)
-	upl := func(id string) string {
-		par := parent[id]
-		if par == "" {
-			return ""
-		}
-		for _, e := range edges {
-			if e.from == id && e.to == par {
-				return e.port
-			}
-		}
-		for _, h := range byID[id].Hosts {
-			if owner[normMAC(h["mac-address"])] == par {
-				return h["on-interface"]
-			}
-		}
-		return ""
-	}
-	depth := func(id string) int {
-		n := 0
-		for p := parent[id]; p != ""; p = parent[p] {
-			n++
-		}
-		return n
-	}
-	// Ersatz ohne Nachbar-Eintrag: dort einhängen, wo die MAC des Geräts am tiefsten
-	// gelernt wird – aber nie über den Uplink eines Geräts (dort steht alles von oben)
-	for changed := true; changed; {
-		changed = false
-		for _, r := range ok {
-			if _, in := parent[r.ID]; in {
-				continue
-			}
-			best, bestPort, bestDepth := "", "", -1
-			for _, x := range ok {
-				if _, in := parent[x.ID]; !in || x.ID == r.ID {
-					continue
-				}
-				ux := upl(x.ID)
-				for _, h := range x.Hosts {
-					if owner[normMAC(h["mac-address"])] == r.ID && h["on-interface"] != ux && depth(x.ID) > bestDepth {
-						best, bestPort, bestDepth = x.ID, h["on-interface"], depth(x.ID)
+	var parent, parentPort, uplink map[string]string
+	if foreign {
+		parent, parentPort, uplink = foreignTree(ok, owner)
+	} else {
+		// Breitensuche: Geräte an ihren Eltern-Port hängen
+		parent = map[string]string{root: ""}
+		parentPort = map[string]string{}
+		queue := []string{root}
+		for len(queue) > 0 {
+			a := queue[0]
+			queue = queue[1:]
+			for _, e := range edges {
+				if e.from == a {
+					if _, seen := parent[e.to]; !seen {
+						parent[e.to], parentPort[e.to] = a, e.port
+						queue = append(queue, e.to)
 					}
 				}
 			}
-			if best != "" {
-				parent[r.ID], parentPort[r.ID] = best, bestPort
-				changed = true
+		}
+		// Uplink eines Geräts: Port, an dem es den Eltern-Knoten sieht (Nachbar, sonst MAC-Tabelle)
+		upl := func(id string) string {
+			par := parent[id]
+			if par == "" {
+				return ""
+			}
+			for _, e := range edges {
+				if e.from == id && e.to == par {
+					return e.port
+				}
+			}
+			for _, h := range byID[id].Hosts {
+				if owner[normMAC(h["mac-address"])] == par {
+					return h["on-interface"]
+				}
+			}
+			return ""
+		}
+		depth := func(id string) int {
+			n := 0
+			for p := parent[id]; p != ""; p = parent[p] {
+				n++
+			}
+			return n
+		}
+		// Ersatz ohne Nachbar-Eintrag: dort einhängen, wo die MAC des Geräts am tiefsten
+		// gelernt wird – aber nie über den Uplink eines Geräts (dort steht alles von oben)
+		for changed := true; changed; {
+			changed = false
+			for _, r := range ok {
+				if _, in := parent[r.ID]; in {
+					continue
+				}
+				best, bestPort, bestDepth := "", "", -1
+				for _, x := range ok {
+					if _, in := parent[x.ID]; !in || x.ID == r.ID {
+						continue
+					}
+					ux := upl(x.ID)
+					for _, h := range x.Hosts {
+						if owner[normMAC(h["mac-address"])] == r.ID && h["on-interface"] != ux && depth(x.ID) > bestDepth {
+							best, bestPort, bestDepth = x.ID, h["on-interface"], depth(x.ID)
+						}
+					}
+				}
+				if best != "" {
+					parent[r.ID], parentPort[r.ID] = best, bestPort
+					changed = true
+				}
 			}
 		}
-	}
-	uplink := map[string]string{}
-	for id := range parent {
-		uplink[id] = upl(id)
+		uplink = map[string]string{}
+		for id := range parent {
+			uplink[id] = upl(id)
+		}
 	}
 	children := map[string][]string{}
 	for id, par := range parent {
@@ -337,7 +348,36 @@ func BuildTopology(raws []topoRaw, root string) Topology {
 		sort.SliceStable(n.Ports, func(a, b int) bool { return natLess(n.Ports[a].Name, n.Ports[b].Name) })
 		return n
 	}
-	t.Root = build(root)
+	if foreign {
+		// Virtuelle Wurzel: alle Geräte ohne verwaltetes Gerät darüber hängen direkt am
+		// Fremdgerät; dazu die MACs, die nur über deren Uplinks gesehen werden.
+		vr := &TopoNode{Identity: "Fremdgerät", Model: "Router/Switch eines anderen Herstellers"}
+		port := &TopoPort{Link: true, MACs: []TopoMAC{}}
+		top := append([]string{}, children[TopoForeign]...)
+		sort.Strings(top)
+		seen := map[string]bool{}
+		for _, c := range top {
+			port.Children = append(port.Children, build(c))
+			for m := range collect(c) {
+				seen[m] = true
+			}
+		}
+		for _, c := range top {
+			for _, h := range byID[c].Hosts {
+				m := normMAC(h["mac-address"])
+				if h["local"] == "true" || h["on-interface"] != uplink[c] || seen[m] || owner[m] != "" {
+					continue
+				}
+				seen[m] = true
+				port.MACs = append(port.MACs, TopoMAC{MAC: m, IP: ipOf[m], Host: hostOf[m], VLAN: h["vid"]})
+			}
+		}
+		sort.Slice(port.MACs, func(a, b int) bool { return port.MACs[a].MAC < port.MACs[b].MAC })
+		vr.Ports = []*TopoPort{port}
+		t.Root = vr
+	} else {
+		t.Root = build(root)
+	}
 	for _, r := range ok {
 		if _, in := parent[r.ID]; !in {
 			t.Unattached = append(t.Unattached, &TopoNode{ID: r.ID, Identity: r.Identity, Model: r.Model})
@@ -351,6 +391,38 @@ func BuildTopology(raws []topoRaw, root string) Topology {
 func readTopo(ctx context.Context, cl *routeros.Client) topoRaw {
 	var r topoRaw
 	r.Ports, _ = printAll(ctx, cl, "/interface/print", "=.proplist=name,type,running,mac-address")
+	// wifi-Paket: „running“ heißt dort „Client verbunden“ – ob gesendet wird, sagt monitor
+	var wifi []string
+	for _, p := range r.Ports {
+		if p["type"] == "wifi" {
+			wifi = append(wifi, p["name"])
+		}
+	}
+	if len(wifi) > 0 {
+		if mon, err := printAll(ctx, cl, "/interface/wifi/monitor", "=numbers="+strings.Join(wifi, ","), "=once="); err == nil {
+			state := map[string]string{}
+			for i, m := range mon {
+				n := m["name"]
+				if n == "" && i < len(wifi) {
+					n = wifi[i]
+				}
+				state[n] = strings.ToLower(m["state"])
+			}
+			for _, p := range r.Ports {
+				if st, ok := state[p["name"]]; ok && p["type"] == "wifi" {
+					on := strings.HasPrefix(st, "running") || st == "authorized" || strings.HasPrefix(st, "connected")
+					p["running"] = map[bool]string{true: "true", false: "false"}[on]
+				}
+			}
+		}
+	}
+	if rt, err := printAll(ctx, cl, "/ip/route/print", "?dst-address=0.0.0.0/0", "=.proplist=gateway,active"); err == nil {
+		for _, x := range rt {
+			if x["active"] == "true" && x["gateway"] != "" {
+				r.Gateways = append(r.Gateways, x["gateway"])
+			}
+		}
+	}
 	for _, p := range r.Ports {
 		if m := p["mac-address"]; m != "" {
 			r.OwnMACs = append(r.OwnMACs, m)
@@ -418,4 +490,82 @@ func (p *Poller) SetTopoRoot(key, id string) error {
 	}
 	b, _ := json.MarshalIndent(m, "", "  ")
 	return writeFileAtomic(p.topoRootPath(), b, 0o600)
+}
+
+// foreignTree bestimmt Eltern und Uplinks ohne verwaltete Wurzel (Fremdgerät oben).
+// Uplink = Port, an dem die MAC des Standard-Gateways gelernt wird. Vorfahren eines
+// Geräts X = Geräte, die X „unten“ sehen (nicht über ihren Uplink); Elternteil = der
+// tiefste Vorfahr (der selbst die meisten Vorfahren hat). Ohne Vorfahren: direkt am
+// Fremdgerät. Schleifen (fehlende Gateway-Information) werden aufgelöst.
+func foreignTree(ok []*topoRaw, owner map[string]string) (parent, parentPort, uplink map[string]string) {
+	gw := map[string]bool{}
+	for _, r := range ok {
+		for _, g := range r.Gateways {
+			for _, a := range r.ARP {
+				if a["address"] == g {
+					gw[normMAC(a["mac-address"])] = true
+				}
+			}
+		}
+	}
+	up0 := map[string]string{}
+	for _, r := range ok {
+		for _, h := range r.Hosts {
+			if gw[normMAC(h["mac-address"])] {
+				up0[r.ID] = h["on-interface"]
+				break
+			}
+		}
+	}
+	anc := map[string]map[string]string{} // X → Vorfahr Y → Port bei Y
+	for _, y := range ok {
+		for _, h := range y.Hosts {
+			x := owner[normMAC(h["mac-address"])]
+			if x == "" || x == y.ID || h["local"] == "true" || (up0[y.ID] != "" && h["on-interface"] == up0[y.ID]) {
+				continue
+			}
+			if anc[x] == nil {
+				anc[x] = map[string]string{}
+			}
+			anc[x][y.ID] = h["on-interface"]
+		}
+	}
+	parent, parentPort, uplink = map[string]string{}, map[string]string{}, map[string]string{}
+	for _, x := range ok {
+		best, bestN := "", -1
+		for y := range anc[x.ID] {
+			if n := len(anc[y]); n > bestN || (n == bestN && y < best) {
+				best, bestN = y, n
+			}
+		}
+		if best == "" {
+			parent[x.ID] = TopoForeign
+		} else {
+			parent[x.ID], parentPort[x.ID] = best, anc[x.ID][best]
+		}
+	}
+	// Schleifen auflösen: wer nicht in höchstens len(ok) Schritten oben ankommt, hängt am Fremdgerät
+	for _, x := range ok {
+		cur := x.ID
+		for i := 0; i <= len(ok) && cur != TopoForeign; i++ {
+			cur = parent[cur]
+		}
+		if cur != TopoForeign {
+			parent[x.ID] = TopoForeign
+			delete(parentPort, x.ID)
+		}
+	}
+	for _, x := range ok {
+		u := up0[x.ID]
+		if u == "" && parent[x.ID] != TopoForeign {
+			for _, h := range x.Hosts {
+				if owner[normMAC(h["mac-address"])] == parent[x.ID] {
+					u = h["on-interface"]
+					break
+				}
+			}
+		}
+		uplink[x.ID] = u
+	}
+	return parent, parentPort, uplink
 }

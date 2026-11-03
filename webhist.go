@@ -312,7 +312,7 @@ func (w *web) setTopoRoot(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "ungültige Anfrage", http.StatusBadRequest)
 		return
 	}
-	if _, ok := w.st.Get(req.Root); req.Root != "" && !ok {
+	if _, ok := w.st.Get(req.Root); req.Root != "" && req.Root != TopoForeign && !ok {
 		http.Error(rw, "Gerät unbekannt", http.StatusBadRequest)
 		return
 	}

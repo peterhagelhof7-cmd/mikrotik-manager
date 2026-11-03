@@ -146,3 +146,97 @@ func TestTopologyRootAndErrors(t *testing.T) {
 		t.Fatal("physPort")
 	}
 }
+
+// Fremd-Router oben (nicht verwaltet, Gateway 192.168.1.1 = GW): daran Switch S (ether1)
+// mit AP A an S:ether2, AP B direkt am Router, PC9 direkt am Router.
+func foreignSite(withGateway bool) []topoRaw {
+	h := func(port string, macs ...string) []map[string]string {
+		var out []map[string]string
+		for _, m := range macs {
+			out = append(out, map[string]string{"mac-address": m, "on-interface": port})
+		}
+		return out
+	}
+	cat := func(l ...[]map[string]string) []map[string]string {
+		var out []map[string]string
+		for _, x := range l {
+			out = append(out, x...)
+		}
+		return out
+	}
+	port := func(n string) map[string]string {
+		return map[string]string{"name": n, "type": "ether", "running": "true"}
+	}
+	const S, A, B, GW, PC9, PC2, Handy = "SS:01", "AA:01", "BB:01", "GW:01", "C9:01", "C2:01", "H1:01"
+	arp := []map[string]string{{"address": "192.168.1.1", "mac-address": GW}}
+	gws := []string{"192.168.1.1"}
+	if !withGateway {
+		arp, gws = nil, nil
+	}
+	s := topoRaw{ID: "S", Identity: "Switch", OwnMACs: []string{S}, Gateways: gws, ARP: arp,
+		Ports: []map[string]string{port("ether1"), port("ether2"), port("ether3")},
+		Hosts: cat(h("ether1", GW, B, PC9), h("ether2", A, Handy), h("ether3", PC2))}
+	a := topoRaw{ID: "A", Identity: "AP-OG", OwnMACs: []string{A}, Gateways: gws, ARP: arp,
+		Ports: []map[string]string{port("ether1"), port("ether2")},
+		Hosts: cat(h("ether1", GW, S, B, PC9, PC2), h("ether2", Handy))}
+	b := topoRaw{ID: "B", Identity: "AP-Garten", OwnMACs: []string{B}, Gateways: gws, ARP: arp,
+		Ports: []map[string]string{port("ether1")},
+		Hosts: h("ether1", GW, S, A, PC9, PC2, Handy)}
+	return []topoRaw{s, a, b}
+}
+
+func TestTopologyForeignRoot(t *testing.T) {
+	for _, withGW := range []bool{true, false} {
+		tp := BuildTopology(foreignSite(withGW), TopoForeign)
+		r := tp.Root
+		if r == nil || r.ID != "" || r.Identity != "Fremdgerät" || tp.RootAuto || len(r.Ports) != 1 {
+			t.Fatalf("Wurzel (gw=%v): %+v", withGW, r)
+		}
+		top := r.Ports[0]
+		var names []string
+		for _, c := range top.Children {
+			names = append(names, c.Identity)
+		}
+		if withGW {
+			// alle Geräte ohne verwaltetes Gerät darüber eine Stufe unter dem Fremdgerät
+			if strings.Join(names, ",") != "AP-Garten,Switch" {
+				t.Fatalf("direkt am Fremdgerät: %v", names)
+			}
+			// am Fremdgerät: Gateway und PC9 (nur über die Uplinks gesehen)
+			if macsOf(top) != "C9,GW" || top.MACs[1].IP != "192.168.1.1" {
+				t.Fatalf("MACs am Fremdgerät: %+v", top.MACs)
+			}
+			var sw *TopoNode
+			for _, c := range top.Children {
+				if c.ID == "S" {
+					sw = c
+				}
+			}
+			if sw.Uplink != "ether1" {
+				t.Fatalf("Uplink Switch: %+v", sw)
+			}
+			p := findPort(sw, "ether2")
+			if p == nil || len(p.Children) != 1 || p.Children[0].ID != "A" || macsOf(findPort(p.Children[0], "ether2")) != "H1" {
+				t.Fatalf("AP unter Switch: %+v", p)
+			}
+			if macsOf(findPort(sw, "ether3")) != "C2" {
+				t.Fatalf("PC2 am Switch: %+v", findPort(sw, "ether3"))
+			}
+		}
+		// ohne Gateway-Information: kein Absturz, keine Schleife, alle Geräte im Baum
+		count := 0
+		var walk func(n *TopoNode)
+		walk = func(n *TopoNode) {
+			count++
+			for _, p := range n.Ports {
+				for _, c := range p.Children {
+					walk(c)
+				}
+			}
+		}
+		walk(r)
+		if count != 4 || len(tp.Unattached) != 0 {
+			t.Fatalf("gw=%v: %d Knoten, nicht zugeordnet %+v", withGW, count, tp.Unattached)
+		}
+	}
+}
