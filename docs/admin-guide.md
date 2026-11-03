@@ -131,6 +131,46 @@ lässt sich als Lesezeichen speichern; „← Geräte“ oder Zurück im Browser
 Alles auf der Detailseite liest nur – außer dem Standort-Text und den Aktionsknöpfen, die
 wie in der Liste mit Rückfrage arbeiten.
 
+### 4.2 WWAN / LTE-Router (z. B. Chateau LTE7 ax)
+
+Geräte mit LTE-Modem erkennt der Manager selbst (Hinweis **LTE** und Monatsvolumen in der
+Geräteliste). Auf der Detailseite steht dann der Abschnitt **WWAN / LTE-Router**:
+
+- **LTE-Zustand** live: Verbindung, Betreiber, Technik, Signal (RSRP/SINR), SIM, IMEI.
+- **Einstellung je Gerät:** **Netz** als die ersten drei Oktette (z. B. `192.168.50`), optional
+  **APN** (leer = automatisch) und eine **SIM-PIN je LTE-Schnittstelle**. Die PIN liegt
+  verschlüsselt im Tresor des Managers (nie in `wwan.json`), „PIN löschen“ entfernt sie.
+- **Vorschau & ausrollen** macht das Gerät zum Router ins Mobilfunknetz:
+  - LAN: Gerät **.254**/24 auf der Bridge, DHCP-Server **.10–.200**, Gateway .254,
+    DNS an die Clients **1.1.1.1 und 9.9.9.9**; ein DHCP-Client auf der Bridge wird entfernt
+    (das Gerät ist jetzt selbst Router), ebenso andere feste Adressen im selben Netz.
+  - Gerät: DNS 1.1.1.1/9.9.9.9, **NTP-Client** an (`de.pool.ntp.org`).
+  - **WAN über Kabel:** ether4 und ether5 (soweit vorhanden) kommen aus dem LAN in eine
+    eigene Bridge `mm-wan` mit DHCP-Client. Bekommt das Gerät dort eine Adresse **und** ist
+    darüber das Internet erreichbar (Ping an 8.8.4.4 über das WAN-Gateway, rekursive Route
+    mit `check-gateway`), ist das die **Standardroute** (Distanz 1); die LTE-Route hat
+    Distanz 2 und springt als **Ersatz** ein, sobald das WAN kein Internet mehr hat. Die
+    Routen setzt ein Skript am DHCP-Client (Kommentar `mm-wan`). 8.8.4.4 läuft dabei immer
+    übers WAN – deshalb ist es nicht unter den DNS-Servern der Clients.
+  - **NAT** (masquerade) über jede LTE-Schnittstelle und `mm-wan`; **Firewall** (Kommentar
+    `mm-wwan …`): aus dem Internet (LTE und WAN) nur Antworten (established/related) – aufs
+    Gerät und ins LAN.
+  - PIN und APN werden zuerst gesetzt, dann das LAN umgebaut. Wie immer mit Backup und
+    Rückroll-Wächter: kommt der Manager danach nicht wieder an das Gerät (z. B. falsche
+    PIN, kein Netz), stellt es nach 5 Minuten selbst den alten Zustand her.
+  - Die Verwaltung läuft danach über LTE (WireGuard-Tunnel zum Manager).
+- **Volumen über LTE:** Der Manager liest bei jeder Abfrage die Byte-Zähler der
+  LTE-Schnittstellen und bucht die Differenz auf den Kalendermonat – **Stichtag ist immer der
+  1. des Monats** (Ortszeit des Managers). Nach einem Neustart beginnen die Zähler bei 0; der
+  Manager erkennt das (kleinere Laufzeit bzw. kleinerer Zähler) und zählt den neuen Stand
+  komplett. Verkehr unmittelbar vor einem Neustart, während der Manager das Gerät nicht
+  erreicht, fehlt. Tabelle je Monat auf der Detailseite, CSV je Gerät, CSV aller LTE-Geräte
+  unter `/api/wwan/usage.csv?month=JJJJ-MM`. Gespeichert in `wwan-usage/<Gerät>.json`
+  (60 Monate).
+
+**Stand:** am echten Chateau noch nicht ausgerollt (kein Testgerät) – vor dem ersten Kunden
+an einem Testgerät prüfen (PIN-Befehl, LTE-Monitor-Felder, Firewall-Reihenfolge).
+
 ## 5. Aktionen je Gerät
 
 Alle Aktionen laufen im Hintergrund und **nacheinander** (nie zwei Geräte
@@ -410,6 +450,8 @@ Alle Einstellungen sind Umgebungsvariablen – bei systemd in
 | `wlan-central.json` | zentrale WLAN-Konfiguration – **enthält WLAN-Passwörter** |
 | `migrations/` | Fortschritt laufender Umstellungen wireless → wifi |
 | `auto-update.json` | Einstellung und letztes Ergebnis der automatischen Updates |
+| `wwan.json` | WWAN-Einstellung je Gerät (Netz, APN; PINs nur im Tresor) |
+| `wwan-usage/<Geräte-ID>.json` | Volumen über LTE je Monat |
 | `history/<Geräte-ID>.jsonl` | Verlauf je Gerät: wer hat über den Manager was ausgelöst (gekürzt auf die neuesten ~1000) |
 
 - Alle Dateien sind nur für den Dienst lesbar (0600/0700). Das Datenverzeichnis wie

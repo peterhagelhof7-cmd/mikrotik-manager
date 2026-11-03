@@ -467,3 +467,31 @@ meshlink-test-20261103`).
   Reihenfolge, Noop mit/ohne aktive Station, veraltetes Skript, VLAN über Meshlink,
   wireless-Paket, Abschalten inkl. Sperre, erzeugte Zugangsdaten). Am echten Gerät über den
   Manager noch nicht ausgerollt.
+
+## 2026-11-03 – WWAN / LTE-Router (Chateau LTE7 ax)
+
+Vorgaben des Users: PIN je SIM, Gerät macht DHCP und routet, Netz je Gerät als erste drei
+Oktette (Gerät immer .254), DNS 1.1.1.1/9.9.9.9, NTP, Volumen über WWAN mit Stichtag 1. des
+Monats; nur erfassen, keine Schwelle; mm und Cloud; noch kein Testgerät.
+
+- **Je Gerät, nicht je Standort/Kunde:** Netz und PIN gehören zum einzelnen Router.
+- **Als Änderung mit Plan/Vorschau/Commit-Confirm** (Aktion `wwan`), nicht als freie Skripte:
+  das Gerät wechselt dabei vom AP zum Router, ein Fehler (PIN, kein Netz) darf es nicht
+  dauerhaft vom Manager trennen. PIN/APN zuerst, LAN-Umbau danach.
+- **Alles mit Kommentar `mm-wwan`** (Adresse, Pool, DHCP, NAT, Firewall), damit erneutes
+  Ausrollen ersetzt statt verdoppelt. Firewall bewusst minimal (nur Antworten aus LTE).
+- **PIN:** RouterOS zeigt die gesetzte PIN nicht an → der Manager merkt sich einen Hash der
+  zuletzt ausgerollten PIN; neue PIN = Abweichung. PIN selbst nur im Tresor.
+- **Volumen manager-seitig** aus den Schnittstellen-Zählern (Differenz je Abfrage, Neustart
+  über kleinere Laufzeit/kleineren Zähler erkannt), gebucht auf den Monat der Abfrage – bei
+  5-min-Abfrage ist die Unschärfe am Monatswechsel vernachlässigbar. Kein Skript auf dem Gerät
+  (kein Flash-Schreiben, nichts zu pflegen); Lücke nur bei Neustart ohne Erreichbarkeit.
+- Tests: `wwan_test.go` (Netz/PIN-Prüfung, frisches Gerät → Skript, Noop, neue PIN, anderes
+  Netz, fehlende Firewall-Regel, Sperren, Volumen inkl. Monatswechsel/Neustart/Zähler-Reset/
+  zweite LTE, PIN nur im Tresor). Oberfläche per Mock. **Am Gerät ungetestet.**
+- **WAN über Kabel mit LTE als Ersatz** (User-Nachtrag): ether4/ether5 in eigener Bridge
+  `mm-wan` mit DHCP-Client. „Internet erreichbar“ wird echt geprüft, nicht nur das Gateway:
+  rekursive Route (Host-Route 8.8.4.4 über das DHCP-Gateway, Standardroute über 8.8.4.4 mit
+  `check-gateway=ping`, Distanz 1), gesetzt vom DHCP-Client-Skript; LTE-Standardroute
+  Distanz 2. Prüfadresse bewusst kein Client-DNS (sie hängt fest am WAN). Gerät ohne
+  ether4/5: kein WAN, nur LTE.

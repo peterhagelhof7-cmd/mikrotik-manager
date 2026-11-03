@@ -136,6 +136,10 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 	mux.Handle("GET /api/devices/{id}/files", w.auth(http.HandlerFunc(w.deviceFiles)))
 	mux.Handle("GET /api/devices/{id}/history", w.auth(http.HandlerFunc(w.deviceHistory)))
 	mux.Handle("GET /api/devices/{id}/wlan/status", w.auth(http.HandlerFunc(w.deviceWlanStatus)))
+	mux.Handle("GET /api/devices/{id}/wwan", w.auth(http.HandlerFunc(w.deviceWwan)))
+	mux.Handle("POST /api/devices/{id}/wwan", w.auth(w.rec("WWAN-Einstellung gespeichert", http.HandlerFunc(w.saveWwan))))
+	mux.Handle("GET /api/devices/{id}/wwan/usage.csv", w.auth(http.HandlerFunc(w.deviceWwanCSV)))
+	mux.Handle("GET /api/wwan/usage.csv", w.auth(http.HandlerFunc(w.allWwanCSV)))
 	mux.Handle("POST /api/devices/{id}/location", w.auth(w.rec("Standort geändert", http.HandlerFunc(w.setLocation))))
 	return mux
 }
@@ -413,6 +417,8 @@ func (w *web) devices(rw http.ResponseWriter, r *http.Request) {
 		Clients   []WlanClient `json:"wlanClients"`
 		ClientsAt time.Time    `json:"wlanClientsAt,omitempty"`
 		ClientErr string       `json:"wlanClientsError,omitempty"`
+		// WWAN: Volumen des laufenden Monats (nur LTE-Geräte)
+		WwanMonth *WwanMonth `json:"wwanMonth,omitempty"`
 		// Fingerabdruck eines neuen, abgelehnten SSH-Hostkeys (Gerät neu aufgesetzt?)
 		HostKeyChanged string `json:"hostKeyChanged,omitempty"`
 	}
@@ -424,6 +430,13 @@ func (w *web) devices(rw http.ResponseWriter, r *http.Request) {
 		}
 		if j, ok := w.pl.jobs.Get(d.ID); ok {
 			x.Job = &j
+		}
+		if len(d.LTE) > 0 {
+			m := WwanMonth{Month: time.Now().Format("2006-01")}
+			if u := w.pl.WwanUsage(d.ID); len(u) > 0 && u[0].Month == m.Month {
+				m = u[0]
+			}
+			x.WwanMonth = &m
 		}
 		if s, ok := w.pl.wc.get(d.ID); ok {
 			x.Clients, x.ClientsAt, x.ClientErr = s.Clients, s.At, s.Err
@@ -510,6 +523,7 @@ func (w *web) forget(rw http.ResponseWriter, r *http.Request) {
 	w.vault.Delete("dev:" + id)
 	w.pl.hostKeys.Forget(id)
 	w.pl.hist.Forget(id)
+	w.pl.forgetWwan(id)
 	w.st.save()
 	writeJSON(rw, map[string]bool{"ok": true})
 }

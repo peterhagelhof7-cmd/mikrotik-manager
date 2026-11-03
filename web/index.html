@@ -318,7 +318,7 @@ function row(d) {
   return `<tr class="${major(v) === '6' ? 'v6' : ''}">
     <td><span class="dot ${online(d) ? 'on' : 'off'}" title="zuletzt gesehen: ${esc(ago(d.lastSeen))}"></span><a class="devlink" href="#dev/${encodeURIComponent(d.id)}" title="Öffnet die Detailseite des Geräts: Ports, Konfig-Historie, Dateien, Backups, Einstellungen und Standort.">${esc(d.identity || '—')}</a>${d.location ? `<div class="hint">${esc(d.location)}</div>` : ''}</td>
     <td><a href="http://${esc(d.ip)}/" target="_blank" rel="noopener">${esc(d.ip)}</a><div class="mono mute">${esc(d.mac)}</div></td>
-    <td>${esc(d.model || d.board)}<div class="mono mute">${esc(d.arch)}${d.serial ? ' · ' + esc(d.serial) : ''}</div></td>
+    <td>${esc(d.model || d.board)}<div class="mono mute">${esc(d.arch)}${d.serial ? ' · ' + esc(d.serial) : ''}</div>${d.wwanMonth ? `<div><span class="badge b-mute" title="LTE-Router: Volumen über LTE im laufenden Monat (Stichtag 1.). Einzelheiten auf der Detailseite.">LTE</span> <span class="hint">${fmtBytes(d.wwanMonth.rx + d.wwanMonth.tx)} im ${esc(d.wwanMonth.month)}</span></div>` : ''}</td>
     <td>${esc(v)}${tags.join('')}<div class="mono mute">${esc(d.channel)}</div></td>
     <td>${fw}</td>
     <td>${esc(d.wirelessPkg || '')}${central && central.enabled && (central.devices || []).includes(d.id) ? ' <span class="badge b-ok" title="WLAN wird zentral verwaltet (Tab „Zentrale WLAN-Verwaltung“).">zentral</span>' : ''}
@@ -334,7 +334,7 @@ function row(d) {
 }
 
 const busy = d => d.job && d.job.running;
-const kindName = k => ({update: 'Update', reboot: 'Neustart', backup: 'Backup', bridge: 'Bridge', dhcp: 'DHCP-Client', wlan: 'WLAN', wifimigrate: 'Umstellung wifi', restore: 'Rollback'})[k] || k;
+const kindName = k => ({update: 'Update', reboot: 'Neustart', backup: 'Backup', bridge: 'Bridge', dhcp: 'DHCP-Client', wlan: 'WLAN', wifimigrate: 'Umstellung wifi', restore: 'Rollback', wwan: 'WWAN / LTE-Router'})[k] || k;
 
 // Einstellungen: Name direkt; Bridge/DHCP erst Vorschau, dann Ausführen mit Rückroll-Wächter.
 function settingsDialog(d) {
@@ -1052,11 +1052,12 @@ function openDetail(id) {
       <div class="card" id="dWlanCard" hidden><div class="dhead"><h3 style="margin:0">WLAN</h3><button class="small" data-dx="wlan" title="Liest die WLAN-Schnittstellen sofort neu vom Gerät. Ändert nichts – ändern über den Knopf „WLAN“ oben.">↻ neu lesen</button><span class="hint" id="dWlanAt"></span></div>
         <div class="legend" style="margin-top:8px"><span class="port wl"><i></i>aus / sendet nicht</span><span class="port wl wl-on"><i></i>sendet, keine Clients</span><span class="port wl wl-cl"><i></i>sendet, mit Clients</span><span class="port wl dis"><i></i>deaktiviert</span></div>
         <div id="dWlan"><div class="hint">lese WLAN …</div></div></div>
+      <div class="card" id="dWwanCard" hidden><div class="dhead"><h3 style="margin:0">WWAN / LTE-Router</h3><button class="small" data-dx="wwan" title="Liest LTE-Zustand und Volumen neu. Ändert nichts.">↻ neu lesen</button></div><div id="dWwan"><div class="hint">lese LTE …</div></div></div>
       <div class="card"><div class="dhead"><h3 style="margin:0">Konfig-Historie</h3><button class="small" data-dx="hist" title="Liest den Verlauf neu. Ändert nichts.">↻ neu lesen</button></div><div id="dHist"><div class="hint">lese Verlauf …</div></div></div>
       <div class="card"><h3>Backups auf dem Manager</h3><div id="dBak"></div></div>
       <div class="card"><div class="dhead"><h3 style="margin:0">Dateien auf dem Gerät</h3><button class="small" data-dx="files" title="Liest die Dateiliste neu vom Gerät. Ändert nichts.">↻ neu lesen</button></div><div id="dFiles"><div class="hint">lese Dateien …</div></div></div>`;
     window.scrollTo(0, 0);
-    loadPorts(); loadHist(); loadFiles(); loadWlan();
+    loadPorts(); loadHist(); loadFiles(); loadWlan(); loadWwan();
   }
   renderDetail();
   clearInterval(detailTimer);
@@ -1254,9 +1255,73 @@ function renderWlan() {
     <div class="hint" style="margin-top:6px">Zustand laut RouterOS (<span class="mono">monitor</span>), Clients laut letzter Abfrage des Managers (jede Minute). Ändern über den Knopf „WLAN“ oben.</div>
     ${wlLogHtml(detailCache.wlanStatus)}`;
 }
+// --- WWAN / LTE-Router ---
+const fmtBytes = n => n >= 1e9 ? (n / 1e9).toFixed(2).replace('.', ',') + ' GB' : n >= 1e6 ? (n / 1e6).toFixed(1).replace('.', ',') + ' MB' : Math.round((n || 0) / 1e3) + ' kB';
+const wwAdmin = d => typeof can !== 'function' || can(d.tenant, L_ADMIN);
+async function loadWwan() {
+  const id = detailId, d = detailDev();
+  if (!d || !(d.lte || []).length) { $('#dWwanCard').hidden = true; return; }
+  $('#dWwanCard').hidden = false;
+  try {
+    const r = await fetch(`/api/devices/${encodeURIComponent(id)}/wwan`, {cache: 'no-store'});
+    if (!r.ok) throw new Error(await r.text());
+    const w = await r.json();
+    if (id !== detailId) return;
+    renderWwan(d, w);
+  } catch (e) { $('#dWwan').innerHTML = `<div class="hint" style="color:#f0a0a0">WWAN nicht lesbar: ${esc(e.message)}</div>`; }
+}
+function renderWwan(d, w) {
+  const c = w.config || {}, df = w.defaults || {}, adm = wwAdmin(d);
+  const ltes = (w.lte || []).map(x => x.name);
+  for (const n of d.lte || []) if (!ltes.includes(n)) ltes.push(n);
+  const lte = (w.lte || []).map(x => `<tr><td><b>${esc(x.name)}</b></td><td>${x.running ? '<span style="color:var(--ok)">● verbunden</span>' : '<span class="mute">○ getrennt</span>'}${x.status ? `<div class="hint">${esc(x.status)}</div>` : ''}</td>
+    <td>${esc(x.operator || '–')}<div class="hint">${esc(x.tech || '')}</div></td><td class="mono">${x.rsrp ? 'RSRP ' + esc(x.rsrp) : ''}${x.sinr ? ' · SINR ' + esc(x.sinr) : ''}${x.rssi && !x.rsrp ? 'RSSI ' + esc(x.rssi) : ''}</td>
+    <td>${esc(x.sim || '–')}</td><td class="mono mute">${esc(x.imei || '')}</td></tr>`).join('');
+  const usage = (w.usage || []).map(m => `<tr><td>${esc(m.month)}</td><td>${fmtBytes(m.rx)}</td><td>${fmtBytes(m.tx)}</td><td><b>${fmtBytes(m.rx + m.tx)}</b></td></tr>`).join('');
+  const pre = c.prefix || '';
+  $('#dWwan').innerHTML = `
+    ${w.lteError ? `<div class="hint" style="color:#f0a0a0">LTE-Zustand nicht lesbar: ${esc(w.lteError)}</div>` : `<div class="wrap"><table><thead><tr><th>LTE</th><th>Verbindung</th><th>Betreiber</th><th>Signal</th><th>SIM</th><th>IMEI</th></tr></thead><tbody>${lte || '<tr><td colspan="6" class="mute">keine</td></tr>'}</tbody></table></div>`}
+    <h3 style="margin-top:14px">Einstellung</h3>
+    <div class="hint">Das Gerät wird Router ins Mobilfunknetz: LAN = <b><span id="wwNet">${esc(pre || 'x.y.z')}</span>.0/24</b>, Gerät <b>.${df.host}</b>, DHCP .${df.poolLo}–.${df.poolHi}, DNS ${esc((df.dns || []).join(' und '))} (Gerät und Clients), NTP ${esc(df.ntp || '')}, NAT, Firewall: aus dem Internet nur Antworten. <b>ether4/ether5</b> (soweit vorhanden) werden WAN-Anschluss mit DHCP-Client: ist darüber das Internet erreichbar, ist das die Standardroute, LTE springt als Ersatz ein. Speichern ändert nichts am Gerät – erst „Vorschau &amp; ausrollen“ (mit Backup und automatischem Zurückrollen).</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin-top:10px">
+      <div><label for="wwPrefix" style="margin:0">Netz (erste 3 Oktette)</label><input id="wwPrefix" ${adm ? '' : 'disabled'} value="${esc(pre)}" placeholder="192.168.50" maxlength="11" title="Die ersten drei Oktette des LAN, z. B. 192.168.50 – das Gerät bekommt .${df.host}."></div>
+      <div><label for="wwApn" style="margin:0">APN <span class="hint">(leer = automatisch)</span></label><input id="wwApn" ${adm ? '' : 'disabled'} value="${esc(c.apn || '')}" maxlength="64" title="Zugangspunkt des Mobilfunkanbieters; meist automatisch."></div>
+      ${ltes.map(n => `<div><label style="margin:0">SIM-PIN ${esc(n)} ${(c.pinSet || {})[n] ? '<span class="badge b-ok">hinterlegt</span>' : '<span class="badge b-mute">keine</span>'}</label>
+        <input data-pin="${esc(n)}" ${adm ? '' : 'disabled'} type="password" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="${(c.pinSet || {})[n] ? 'unverändert lassen' : '4–8 Ziffern'}" title="PIN der SIM in ${esc(n)} – wird verschlüsselt auf dem Manager gespeichert und beim Ausrollen gesetzt.">
+        ${(c.pinSet || {})[n] ? `<label style="display:flex;gap:6px;align-items:center;margin:4px 0 0"><input type="checkbox" data-pindel="${esc(n)}" ${adm ? '' : 'disabled'} style="width:auto"> PIN löschen</label>` : ''}</div>`).join('')}
+    </div>
+    <div class="btns" style="justify-content:flex-start" ${adm ? '' : 'hidden'}>
+      <button class="small" data-dx="wwsave" title="Speichert Netz, APN und PIN auf dem Manager. Ändert nichts am Gerät.">Speichern</button>
+      <button class="small primary" data-dx="wwprev" title="Speichert und zeigt, was auf dem Gerät geändert würde – erst „Jetzt ausführen“ ändert etwas.">Vorschau &amp; ausrollen</button>
+      <span class="hint" id="wwMsg"></span></div>
+    <div id="wwPlan" hidden style="margin-top:8px"></div>
+    <h3 style="margin-top:14px">Volumen über LTE <span class="hint" style="font-weight:normal">(Stichtag 1. des Monats · <a href="/api/devices/${encodeURIComponent(d.id)}/wwan/usage.csv">CSV</a>)</span></h3>
+    ${usage ? `<div class="wrap"><table><thead><tr><th>Monat</th><th>empfangen</th><th>gesendet</th><th>Summe</th></tr></thead><tbody>${usage}</tbody></table></div>` : '<div class="hint">noch keine Werte – gezählt wird ab der ersten Abfrage</div>'}
+    <div class="hint" style="margin-top:6px">Gezählt aus den Byte-Zählern der LTE-Schnittstellen bei jeder Abfrage des Managers; nach einem Neustart des Geräts zählt der neue Stand komplett. Verkehr kurz vor einem Neustart, während der Manager das Gerät nicht erreicht, fehlt.</div>`;
+  const pf = $('#wwPrefix');
+  if (pf) pf.oninput = () => { $('#wwNet').textContent = pf.value || 'x.y.z'; };
+}
+async function saveWwan(preview) {
+  const d = detailDev(); if (!d) return;
+  const pins = {};
+  document.querySelectorAll('#dWwan [data-pin]').forEach(i => { if (i.value) pins[i.dataset.pin] = i.value; });
+  document.querySelectorAll('#dWwan [data-pindel]').forEach(i => { if (i.checked) pins[i.dataset.pindel] = '-'; });
+  $('#wwMsg').textContent = 'speichere …';
+  try {
+    const r = await api('POST', `/api/devices/${encodeURIComponent(d.id)}/wwan`, {prefix: $('#wwPrefix').value.trim(), apn: $('#wwApn').value.trim(), pins});
+    if (!r.ok) { $('#wwMsg').textContent = '❌ ' + r.msg; return; }
+    $('#wwMsg').textContent = r.msg;
+    if (preview) {
+      await previewChange($('#wwPlan'), {close() { $('#wwPlan').hidden = true; }}, d, 'WWAN / LTE-Router', {action: 'wwan'});
+    } else { loadWwan(); }
+  } catch (e) { $('#wwMsg').textContent = '❌ ' + e.message; }
+}
 $('#detail').addEventListener('click', async e => {
   const b = e.target.closest('button[data-dx]'); if (!b) return;
   const x = b.dataset.dx;
+  if (x === 'wwan') { $('#dWwan').innerHTML = '<div class="hint">lese LTE …</div>'; loadWwan(); }
+  if (x === 'wwsave') saveWwan(false);
+  if (x === 'wwprev') saveWwan(true);
   if (x === 'wlan') { $('#dWlan').innerHTML = '<div class="hint">lese WLAN …</div>'; detailCache.wlan = null; loadWlan(); }
   if (x === 'wlcl') { const n = b.dataset.if; wlOpen.has(n) ? wlOpen.delete(n) : wlOpen.add(n); renderWlan(); }
   if (x === 'back') { location.hash = ''; }

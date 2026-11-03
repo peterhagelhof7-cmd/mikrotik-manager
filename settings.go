@@ -38,7 +38,10 @@ type Plan struct {
 	Bridge  string   `json:"bridge,omitempty"`
 
 	wlan []WlanEdit // WLAN: auf Schnittstellennamen festgelegte Änderungen
-	mig  *migration // Umstellung wireless → wifi
+	// WWAN: feste neue Adresse des Geräts (zum Wiederverbinden) und gesetzte PINs (Hash)
+	NewAddr  string `json:"-"`
+	wwanPins map[string]string
+	mig      *migration // Umstellung wireless → wifi
 }
 
 // ChangeReq ist eine gewünschte Änderung aus der Weboberfläche.
@@ -388,6 +391,8 @@ func (p *Poller) planFor(ctx context.Context, cl *routeros.Client, id string, re
 	switch req.Action {
 	case "wifimigrate":
 		return p.planMigrate(ctx, cl, id, true)
+	case "wwan":
+		return p.planWwan(ctx, cl, id)
 	case "central":
 		// Prüfen geht auch ohne Aktivierung; Ausrollen prüft die Aktivierung (centralApply).
 		c := p.Central()
@@ -419,7 +424,7 @@ func makePlan(ctx context.Context, cl *routeros.Client, req ChangeReq) (Plan, er
 func (p *Poller) StartChange(ids []string, req ChangeReq) []Result {
 	fn := func(ctx context.Context, id string, x *Job) error { return p.doChange(ctx, id, x, req) }
 	switch req.Action {
-	case "bridge", "dhcp", "wlan", "central":
+	case "bridge", "dhcp", "wlan", "central", "wwan":
 	case "wifimigrate":
 		fn = p.doMigrate
 	default:
@@ -506,6 +511,9 @@ func (p *Poller) doChange(ctx context.Context, id string, x *Job, req ChangeReq)
 
 	// Wieder verbinden: neue IP, alte IP, was MNDP meldet
 	p.jobs.step(x, name, "verbinde neu …")
+	if plan.NewAddr != "" && newIP == "" {
+		newIP = plan.NewAddr // WWAN: feste neue LAN-Adresse
+	}
 	ncl, ip, err := p.reconnect(ctx, id, d.SoftwareID, []string{newIP, oldIP}, 3*time.Minute)
 	if err != nil {
 		p.jobs.step(x, name, "Gerät nicht wieder erreichbar – das Gerät rollt nach Ablauf des Wächters selbst zurück")
@@ -560,6 +568,9 @@ func (p *Poller) doChange(ctx context.Context, id string, x *Job, req ChangeReq)
 		p.jobs.step(x, name, "DHCP-Client gebunden: %s", bound)
 	}
 
+	if action == "wwan" {
+		p.markPinsApplied(id, plan.wwanPins)
+	}
 	// Bestätigen = Rückweg löschen
 	rctx, cancel = context.WithTimeout(ctx, 15*time.Second)
 	err = removeScripts(rctx, cl, tag)

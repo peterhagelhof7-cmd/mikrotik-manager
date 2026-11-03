@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -98,7 +101,7 @@ func (c *captureWriter) Write(b []byte) (int, error) {
 
 func changeLabel(a string) string {
 	if l, ok := map[string]string{"bridge": "alle Ports in die Bridge", "dhcp": "DHCP-Client auf der Bridge", "wlan": "WLAN ändern",
-		"central": "zentrale WLAN-Konfiguration", "wifimigrate": "Umstellung auf wifi-Paket"}[a]; ok {
+		"central": "zentrale WLAN-Konfiguration", "wifimigrate": "Umstellung auf wifi-Paket", "wwan": "WWAN / LTE-Router"}[a]; ok {
 		return l
 	}
 	return a
@@ -108,7 +111,7 @@ func changeLabel(a string) string {
 func jobKindLabel(k string) string {
 	if l, ok := map[string]string{"update": "Update", "reboot": "Neustart", "backup": "Backup", "bridge": "Bridge",
 		"dhcp": "DHCP-Client", "wlan": "WLAN", "central": "zentrale WLAN-Konfiguration", "wifimigrate": "Umstellung wifi",
-		"restore": "Rollback"}[k]; ok {
+		"restore": "Rollback", "wwan": "WWAN / LTE-Router"}[k]; ok {
 		return l
 	}
 	return k
@@ -199,4 +202,88 @@ func (w *web) deviceWlanStatus(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(rw, st)
+}
+
+// --- WWAN / LTE-Router ---
+
+func (w *web) deviceWwan(rw http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	cfg, ok := w.pl.WwanConfig(id)
+	out := map[string]any{"configured": ok, "config": cfg, "usage": w.pl.WwanUsage(id),
+		"defaults": map[string]any{"host": wwanHost, "poolLo": wwanPoolLo, "poolHi": wwanPoolHi, "dns": wwanDNS, "ntp": wwanNTP}}
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+	if l, err := w.pl.LteStatus(ctx, id); err != nil {
+		out["lteError"] = err.Error()
+	} else {
+		out["lte"] = l
+	}
+	writeJSON(rw, out)
+}
+
+func (w *web) saveWwan(rw http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Prefix string            `json:"prefix"`
+		APN    string            `json:"apn"`
+		Pins   map[string]string `json:"pins"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 8192)).Decode(&req); err != nil {
+		http.Error(rw, "ungültige Anfrage", http.StatusBadRequest)
+		return
+	}
+	c, err := w.pl.SaveWwan(r.PathValue("id"), req.Prefix, req.APN, req.Pins)
+	if err != nil {
+		writeJSON(rw, map[string]any{"ok": false, "msg": err.Error()})
+		return
+	}
+	writeJSON(rw, map[string]any{"ok": true, "msg": "WWAN-Einstellung gespeichert – an den Geräten ändert sich erst mit „Vorschau & ausrollen“ etwas", "config": c})
+}
+
+// wwanCSV: Monatsvolumen als CSV (Semikolon, für Excel). ids: Geräte, month: "" = alle Monate.
+func (w *web) wwanCSV(rw http.ResponseWriter, ids []string, month, file string) {
+	rw.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	rw.Header().Set("Content-Disposition", `attachment; filename="`+file+`"`)
+	rw.Write([]byte{0xef, 0xbb, 0xbf})
+	cw := csv.NewWriter(rw)
+	cw.Comma = ';'
+	cw.Write([]string{"Monat", "Gerät", "Standort", "Empfangen (MB)", "Gesendet (MB)", "Summe (MB)"})
+	mb := func(b int64) string {
+		return strings.Replace(strconv.FormatFloat(float64(b)/1e6, 'f', 1, 64), ".", ",", 1)
+	}
+	for _, id := range ids {
+		d, _ := w.st.Get(id)
+		for _, m := range w.pl.WwanUsage(id) {
+			if month != "" && m.Month != month {
+				continue
+			}
+			cw.Write([]string{m.Month, d.Identity, d.Location, mb(m.Rx), mb(m.Tx), mb(m.Rx + m.Tx)})
+		}
+	}
+	cw.Flush()
+}
+
+var monthRe = regexp.MustCompile(`^\d{4}-\d{2}$`)
+
+func (w *web) deviceWwanCSV(rw http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	w.wwanCSV(rw, []string{id}, "", "wwan-"+safeName(id)+".csv")
+}
+
+func (w *web) allWwanCSV(rw http.ResponseWriter, r *http.Request) {
+	month := r.URL.Query().Get("month")
+	if month != "" && !monthRe.MatchString(month) {
+		http.Error(rw, "Monat als JJJJ-MM", http.StatusBadRequest)
+		return
+	}
+	var ids []string
+	for _, d := range w.st.List() {
+		if len(d.LTE) > 0 || len(w.pl.WwanUsage(d.ID)) > 0 {
+			ids = append(ids, d.ID)
+		}
+	}
+	name := "wwan-volumen.csv"
+	if month != "" {
+		name = "wwan-volumen-" + month + ".csv"
+	}
+	w.wwanCSV(rw, ids, month, name)
 }

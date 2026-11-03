@@ -15,16 +15,19 @@ import (
 // bei IP-Wechsel, Umbenennung oder neuem Bridge-Aufbau gleich); solange sie
 // unbekannt ist, die MAC aus MNDP.
 type Device struct {
-	ID         string    `json:"id"`
-	SoftwareID string    `json:"softwareId,omitempty"`
-	MAC        string    `json:"mac,omitempty"`
-	IP         string    `json:"ip,omitempty"`
-	Identity   string    `json:"identity,omitempty"`
-	Version    string    `json:"version,omitempty"` // RouterOS-Version
-	Platform   string    `json:"platform,omitempty"`
-	Board      string    `json:"board,omitempty"`
-	Interface  string    `json:"interface,omitempty"` // Schnittstelle, auf der MNDP kam (Geräteseite)
-	Uptime     int64     `json:"uptime,omitempty"`    // Sekunden
+	ID         string   `json:"id"`
+	SoftwareID string   `json:"softwareId,omitempty"`
+	MAC        string   `json:"mac,omitempty"`
+	IP         string   `json:"ip,omitempty"`
+	Identity   string   `json:"identity,omitempty"`
+	Version    string   `json:"version,omitempty"` // RouterOS-Version
+	Platform   string   `json:"platform,omitempty"`
+	Board      string   `json:"board,omitempty"`
+	Interface  string   `json:"interface,omitempty"` // Schnittstelle, auf der MNDP kam (Geräteseite)
+	Uptime     int64    `json:"uptime,omitempty"`    // Sekunden
+	LTE        []string `json:"lte,omitempty"`       // LTE-Schnittstellen (WWAN, wwan.go)
+	lteRx      map[string]int64
+	lteTx      map[string]int64
 	FirstSeen  time.Time `json:"firstSeen"`
 	LastSeen   time.Time `json:"lastSeen"` // MNDP oder API erreichbar
 	Sources    []string  `json:"sources,omitempty"`
