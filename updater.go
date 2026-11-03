@@ -259,6 +259,10 @@ func (p *Poller) startJobs(ctx context.Context, ids []string, kind string, fn fu
 				p.jobs.step(x, name, "FEHLER: %v", err)
 			}
 			p.jobs.finish(x, err == nil)
+			// Erfolgreiche Backups (jede Nacht) nicht in den Verlauf – sie stehen bei den Backups.
+			if kind != "backup" || err != nil {
+				p.hist.Add(id, "Manager", jobKindLabel(kind)+" beendet", x.Step, err)
+			}
 			p.Trigger(id)
 		}()
 	}

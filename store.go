@@ -49,6 +49,9 @@ type Device struct {
 	APIError    string    `json:"apiError,omitempty"`
 	CredSource  string    `json:"credSource,omitempty"` // device | default | factory
 	LastPoll    time.Time `json:"lastPoll,omitempty"`
+
+	// vom Benutzer gepflegt (Detailseite)
+	Location string `json:"location,omitempty"` // Standort / Notiz, z. B. „Technikraum EG“
 }
 
 // Major liefert die RouterOS-Hauptversion ("6", "7") oder "".

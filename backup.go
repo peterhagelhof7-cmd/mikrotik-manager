@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -42,7 +41,7 @@ type BackupFile struct {
 
 func (p *Poller) backupDir(id string) string {
 	// Software-IDs sind z. B. "ABCD-1234"; trotzdem nichts Pfadartiges zulassen.
-	return filepath.Join(p.cfg.DataDir, "backups", strings.NewReplacer("/", "_", "\\", "_", "..", "_", ":", "_").Replace(id))
+	return filepath.Join(p.cfg.DataDir, "backups", safeName(id))
 }
 
 // ListBackups liefert die Sicherungen eines Geräts, neueste zuerst.

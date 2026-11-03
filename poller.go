@@ -28,6 +28,7 @@ type Poller struct {
 	busy       map[string]bool
 	jobs       *Jobs
 	hostKeys   *hostKeys
+	hist       *devHistory // Verlauf je Gerät (history.go)
 	nextBackup time.Time
 	rediscover func()          // MNDP-Anfrage senden (nach IP-Wechsel)
 	ctx        context.Context // Dienst-Kontext für Hintergrund-Jobs
@@ -37,7 +38,7 @@ type Poller struct {
 
 func newPoller(cfg Config, st *Store, v *Vault) *Poller {
 	return &Poller{cfg: cfg, st: st, vault: v, queue: make(chan string, 256), busy: map[string]bool{}, jobs: newJobs(), ctx: context.Background(),
-		hostKeys: &hostKeys{path: filepath.Join(cfg.DataDir, "ssh_known_hosts.json")}}
+		hostKeys: &hostKeys{path: filepath.Join(cfg.DataDir, "ssh_known_hosts.json")}, hist: newDevHistory(cfg.DataDir)}
 }
 
 // Trigger stellt ein Gerät zum baldigen Auslesen ein (nicht blockierend).

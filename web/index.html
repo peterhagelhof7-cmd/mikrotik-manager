@@ -63,6 +63,28 @@ footer{color:var(--muted);font-size:12px;padding:16px;text-align:center}
 @keyframes spin{to{transform:rotate(360deg)}}
 .jobicon{flex:none;width:14px;text-align:center}
 @media (prefers-reduced-motion:reduce){.spin{animation:none;border-top-color:var(--warn)}}
+/* Detailseite eines Geräts */
+nav.tabs[hidden]{display:none}
+a.devlink{color:var(--fg);text-decoration:none;font-weight:700}a.devlink:hover{text-decoration:underline;color:var(--link)}
+.dhead{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.dhead h2{margin:0;font-size:20px}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px 16px;margin-top:10px}
+.kv div span{display:block;color:var(--muted);font-size:12px}
+.portrow{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.port{width:58px;text-align:center;font-size:11px;color:var(--muted)}
+.port i{display:block;height:34px;border-radius:6px;border:2px solid #4a5680;background:#05070d;margin-bottom:3px}
+.port.link i{background:var(--ok);border-color:var(--ok)}
+.port.poe i{background:var(--bad);border-color:var(--bad)}
+.port.poe-nolink i{background:var(--bad);border-color:var(--bad);animation:poeblink 1s steps(1,end) infinite}
+.port.dis i{opacity:.35;background:repeating-linear-gradient(45deg,#05070d 0 5px,#2a3150 5px 8px)}
+.port.sfp i{border-radius:2px;height:26px;margin-top:8px}
+@keyframes poeblink{50%{background:#05070d}}
+@media (prefers-reduced-motion:reduce){.port.poe-nolink i{animation:none;background:repeating-linear-gradient(45deg,var(--bad) 0 6px,#05070d 6px 10px)}}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted)}.legend .port{width:auto;display:flex;gap:6px;align-items:center}.legend .port i{width:18px;height:12px;margin:0;border-radius:3px}
+.tl{border-left:2px solid var(--line);margin-left:6px;padding-left:12px}
+.tl > div{margin:0 0 10px;position:relative}.tl > div::before{content:"";position:absolute;left:-18px;top:6px;width:10px;height:10px;border-radius:50%;background:var(--line)}
+.tl > div.ok::before{background:var(--ok)}.tl > div.bad::before{background:var(--bad)}.tl > div.cfg::before{background:var(--acc)}
+pre.diff{white-space:pre-wrap;word-break:break-all;font-size:12px;background:var(--field);padding:8px;border-radius:8px;margin:6px 0 0;max-height:420px;overflow:auto}
+pre.diff .add{color:#7fdca4}pre.diff .del{color:#f0a0a0}pre.diff .gap{color:var(--muted)}
 </style>
 </head>
 <body>
@@ -79,6 +101,7 @@ footer{color:var(--muted);font-size:12px;padding:16px;text-align:center}
   <div class="card" id="jobs" hidden aria-live="polite"><h3 id="jobsTitle"></h3><div id="jobsBody"></div></div>
   <div class="card" id="results" hidden><h3 id="resTitle"></h3><div id="resBody"></div></div>
   <div class="card" id="upd" hidden></div>
+  <div id="detail" hidden></div>
   <nav class="tabs" role="tablist">
     <button role="tab" data-tab="tabDev" class="active" title="Zeigt die Geräteliste mit Update, Neustart, Einstellungen, WLAN und Backups.">Geräte</button>
     <button role="tab" data-tab="tabCentral" title="Zeigt die zentrale WLAN-Verwaltung: eine WLAN-Konfiguration, die auf allen ausgewählten Geräten gleich ausgerollt wird. Umschalten ändert nichts.">Zentrale WLAN-Verwaltung <span id="cBadge"></span></button>
@@ -283,7 +306,7 @@ function row(d) {
   const st = {ok: '<span class="badge b-ok">ok</span>', auth: '<span class="badge b-bad">Login</span>', unreachable: '<span class="badge b-bad">nicht erreichbar</span>', error: '<span class="badge b-bad">Fehler</span>'}[d.apiStatus] || '<span class="badge b-mute">…</span>';
   const credTag = d.hasOwnCred ? ' <span class="badge b-mute" title="eigene Zugangsdaten">eigene</span>' : '';
   return `<tr class="${major(v) === '6' ? 'v6' : ''}">
-    <td><span class="dot ${online(d) ? 'on' : 'off'}" title="zuletzt gesehen: ${esc(ago(d.lastSeen))}"></span><b>${esc(d.identity || '—')}</b></td>
+    <td><span class="dot ${online(d) ? 'on' : 'off'}" title="zuletzt gesehen: ${esc(ago(d.lastSeen))}"></span><a class="devlink" href="#dev/${encodeURIComponent(d.id)}" title="Öffnet die Detailseite des Geräts: Ports, Konfig-Historie, Dateien, Backups, Einstellungen und Standort.">${esc(d.identity || '—')}</a>${d.location ? `<div class="hint">${esc(d.location)}</div>` : ''}</td>
     <td><a href="http://${esc(d.ip)}/" target="_blank" rel="noopener">${esc(d.ip)}</a><div class="mono mute">${esc(d.mac)}</div></td>
     <td>${esc(d.model || d.board)}<div class="mono mute">${esc(d.arch)}${d.serial ? ' · ' + esc(d.serial) : ''}</div></td>
     <td>${esc(v)}${tags.join('')}<div class="mono mute">${esc(d.channel)}</div></td>
@@ -788,6 +811,7 @@ $('#tiles').addEventListener('click', e => {
 
 function render() {
   renderJobs();
+  if (detailId !== null) renderDetail();
   if ($('#aDlg').open) renderAllClients();
   if (!$('#tabAuto').hidden) { renderAutoState(); if (auto && auto.running) loadAuto(true); }
   const q = $('#q').value.toLowerCase();
@@ -847,6 +871,7 @@ async function load() {
     data = await (await fetch('/api/devices', {cache: 'no-store'})).json();
     if (prev && data.version && prev !== data.version) { location.reload(); return; } // nach Selbst-Update
     render();
+    if (detailId === null && location.hash.startsWith('#dev/')) route(); // direkter Link auf eine Detailseite
   }
   catch (e) { flash('Laden fehlgeschlagen: ' + e.message); }
 }
@@ -869,7 +894,8 @@ function credDialog(dev) {
   $('#dlg').showModal();
 }
 
-$('#rows').addEventListener('click', async e => {
+// Knöpfe der Geräteliste und der Detailseite (gleiche data-*-Attribute).
+async function devAction(e) {
   const b = e.target.closest('button'); if (!b) return;
   const dev = id => data.devices.find(d => d.id === id);
   if (b.dataset.upd) {
@@ -912,7 +938,9 @@ Wurde nichts am Gerät gemacht, kann jemand die Verbindung abfangen – dann abb
     flash(r.ok ? r.msg + ' – Backup/Update jetzt erneut starten' : 'Fehler: ' + r.msg); load();
   }
   if (b.dataset.poll) { await api('POST', `/api/devices/${encodeURIComponent(b.dataset.poll)}/poll`); flash('wird ausgelesen …'); setTimeout(load, 3000); }
-});
+}
+$('#rows').addEventListener('click', devAction);
+$('#detail').addEventListener('click', devAction);
 $('#credBtn').onclick = () => credDialog(null);
 
 $('#bBody').addEventListener('click', async e => {
@@ -964,6 +992,164 @@ $('#discBtn').onclick = async () => { await api('POST', '/api/discover'); flash(
 $('#q').oninput = render;
 load().then(() => { loadCentral(); loadAuto(); });
 // solange ein Job läuft, öfter aktualisieren
+// --- Detailseite eines Geräts (#dev/<id>) ---
+let detailId = null, detailTimer = null, detailCache = {};
+const TAB_IDS = ['tabDev', 'tabCentral', 'tabAuto', 'tabTen', 'tabSys', 'tabBak', 'tabUsr'];
+function detailDev() { return (data.devices || []).find(d => d.id === detailId); }
+function route() {
+  const m = location.hash.match(/^#dev\/(.+)$/);
+  if (m) openDetail(decodeURIComponent(m[1])); else closeDetail();
+}
+window.addEventListener('hashchange', route);
+function setMainHidden(h) {
+  document.querySelector('nav.tabs').hidden = h;
+  if (h) {
+    for (const id of TAB_IDS) { const e = $('#' + id); if (e) { if (!e.hidden) e.dataset.wasOpen = '1'; else delete e.dataset.wasOpen; e.hidden = true; } }
+  } else {
+    for (const id of TAB_IDS) { const e = $('#' + id); if (e && e.dataset.wasOpen) { e.hidden = false; delete e.dataset.wasOpen; } }
+  }
+}
+function openDetail(id) {
+  const first = detailId !== id;
+  detailId = id;
+  if (!detailDev()) { if (data.devices) { flash('Gerät nicht gefunden'); location.hash = ''; } return; }
+  setMainHidden(true);
+  $('#detail').hidden = false;
+  if (first) {
+    detailCache = {};
+    $('#detail').innerHTML = `<div class="card" id="dHead"></div>
+      <div class="card"><div class="dhead"><h3 style="margin:0">Ports</h3><button class="small" data-dx="ports" title="Liest Link- und PoE-Status sofort neu vom Gerät. Ändert nichts.">↻ neu lesen</button><span class="hint" id="dPortsAt"></span></div>
+        <div class="legend" style="margin-top:8px"><span class="port"><i></i>kein Link</span><span class="port link"><i></i>Link</span><span class="port poe"><i></i>PoE versorgt Gerät</span><span class="port poe-nolink"><i></i>PoE an, aber kein Link</span><span class="port dis"><i></i>deaktiviert</span></div>
+        <div id="dPorts"><div class="hint">lese Ports …</div></div></div>
+      <div class="card"><div class="dhead"><h3 style="margin:0">Konfig-Historie</h3><button class="small" data-dx="hist" title="Liest den Verlauf neu. Ändert nichts.">↻ neu lesen</button></div><div id="dHist"><div class="hint">lese Verlauf …</div></div></div>
+      <div class="card"><h3>Backups auf dem Manager</h3><div id="dBak"></div></div>
+      <div class="card"><div class="dhead"><h3 style="margin:0">Dateien auf dem Gerät</h3><button class="small" data-dx="files" title="Liest die Dateiliste neu vom Gerät. Ändert nichts.">↻ neu lesen</button></div><div id="dFiles"><div class="hint">lese Dateien …</div></div></div>`;
+    window.scrollTo(0, 0);
+    loadPorts(); loadHist(); loadFiles();
+  }
+  renderDetail();
+  clearInterval(detailTimer);
+  detailTimer = setInterval(() => { if (!$('#detail').hidden && document.visibilityState === 'visible') loadPorts(true); }, 15000);
+}
+function closeDetail() {
+  if (detailId === null) return;
+  detailId = null; clearInterval(detailTimer);
+  $('#detail').hidden = true; $('#detail').innerHTML = '';
+  setMainHidden(false);
+}
+// Kopf, Einstellungen, Standort und Backups kommen aus /api/devices (bei jedem load() neu).
+function renderDetail() {
+  const d = detailDev(); if (!d || $('#detail').hidden) return;
+  // Beim Neuzeichnen (alle 15 s) eine laufende Eingabe im Standort-Feld nicht verlieren
+  const typing = document.activeElement && document.activeElement.id === 'dLoc' ? $('#dLoc').value : null;
+  const st = {ok: '<span class="badge b-ok">ok</span>', auth: '<span class="badge b-bad">Login</span>', unreachable: '<span class="badge b-bad">nicht erreichbar</span>', error: '<span class="badge b-bad">Fehler</span>'}[d.apiStatus] || '<span class="badge b-mute">…</span>';
+  const kv = [['IP', `<a href="http://${esc(d.ip)}/" target="_blank" rel="noopener">${esc(d.ip)}</a>`], ['MAC', `<span class="mono">${esc(d.mac || '')}</span>`],
+    ['Modell', esc(d.model || d.board || '')], ['Seriennummer', `<span class="mono">${esc(d.serial || '–')}</span>`],
+    ['RouterOS', esc(d.version || '') + (d.latestVersion && d.version && !d.version.startsWith(d.latestVersion) ? ` <span class="badge b-warn">→ ${esc(d.latestVersion)}</span>` : '') + `<div class="hint">Kanal ${esc(d.channel || '–')}</div>`],
+    ['Firmware', d.routerboard ? esc(d.currentFirmware || '') + (d.upgradeFirmware && d.upgradeFirmware !== d.currentFirmware ? ` <span class="badge b-warn">→ ${esc(d.upgradeFirmware)}</span>` : '') : '<span class="mute">kein RouterBOARD</span>'],
+    ['Laufzeit', uptime(d.uptime) || '–'], ['CPU / RAM', `${d.cpuLoad ?? '–'} % · ${d.totalMem ? Math.round((d.totalMem - d.freeMem) / d.totalMem * 100) + ' % belegt' : '–'}`],
+    ['WLAN-Paket', esc(d.wirelessPkg || '–')], ['zuletzt gesehen', esc(ago(d.lastSeen))]];
+  $('#dHead').innerHTML = `<div class="dhead"><button class="small" data-dx="back" title="Zurück zur Geräteliste.">← Geräte</button>
+      <span class="dot ${online(d) ? 'on' : 'off'}"></span><h2>${esc(d.identity || d.ip)}</h2>${st}${d.hostKeyChanged ? ' <span class="badge b-bad">SSH-Schlüssel geändert</span>' : ''}</div>
+    ${d.apiError ? `<div class="hint" style="color:#f0a0a0;margin-top:6px">${esc(d.apiError)}</div>` : ''}
+    <div class="kv">${kv.map(([k, v]) => `<div><span>${k}</span>${v}</div>`).join('')}</div>
+    <h3 style="margin-top:16px">Standort</h3>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="dLoc" maxlength="200" style="flex:1;min-width:220px" placeholder="z. B. Technikraum EG, Rack 2" value="${esc(d.location || '')}" title="Freier Text, wo das Gerät steht. Nur auf dem Manager gespeichert, ändert nichts am Gerät.">
+      <button class="small" data-dx="loc" title="Speichert den Standort-Text auf dem Manager. Ändert nichts am Gerät.">Standort speichern</button></div>
+    <h3 style="margin-top:16px">Einstellungen &amp; Aktionen</h3>
+    <div class="btns" style="justify-content:flex-start;flex-wrap:wrap">
+      <button class="small" data-set="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Name setzen, alle Ports in die Bridge, DHCP-Client – erst Vorschau, dann ausführen.">Einstellungen</button>
+      ${d.wirelessPkg ? `<button class="small" data-wlan="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="WLAN dieses Geräts ansehen und ändern (mit Vorschau).">WLAN</button>` : ''}
+      <button class="small" data-cred="${esc(d.id)}" title="Eigene Zugangsdaten nur für dieses Gerät. Ändert nichts auf dem Gerät.">Login</button>
+      <button class="small" data-upd="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Nach Rückfrage: Backup, dann RouterOS und Firmware aktualisieren (1–2 Neustarts).">Update</button>
+      <button class="small" data-reboot="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Nach Rückfrage: Gerät neu starten.">Neustart</button>
+      <button class="small" data-poll="${esc(d.id)}" title="Liest das Gerät sofort neu aus. Ändert nichts.">↻ neu auslesen</button>
+      ${d.hostKeyChanged ? `<button class="small" data-hostkey="${esc(d.id)}" title="Nach Rückfrage: übernimmt genau diesen neuen SSH-Schlüssel (${esc(d.hostKeyChanged)}).">SSH-Schlüssel übernehmen</button>` : ''}
+    </div>
+    ${d.job ? `<div style="margin-top:10px">${jobCell(d)}</div>` : ''}`;
+  if (typing !== null) { $('#dLoc').value = typing; $('#dLoc').focus(); }
+  $('#dBak').innerHTML = `<div class="btns" style="justify-content:flex-start"><button class="small" data-backup="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Erstellt sofort ein Backup (Binär + Text-Export) auf dem Manager. Kein Neustart.">Backup jetzt</button>
+      ${d.backups ? `<button class="small" data-blist="${esc(d.id)}" title="Liste aller Backups dieses Geräts: herunterladen oder zurückspielen.">${d.backups} Dateien · zuletzt vor ${esc(ago(d.lastBackup))} – herunterladen / zurückspielen</button>` : '<span class="hint">noch kein Backup</span>'}</div>
+    <div class="hint" style="margin-top:6px">Jede Sicherung legt einen Text-Export (.rsc) ab – daraus entstehen die Konfig-Unterschiede in der Historie oben.</div>`;
+}
+function portClass(p) {
+  if (p.disabled) return 'dis';
+  if (p.poeUsed && !p.link) return 'poe-nolink';
+  if (p.poeUsed) return 'poe';
+  return p.link ? 'link' : '';
+}
+function portState(p) {
+  if (p.disabled) return 'deaktiviert';
+  const l = p.link ? 'Link ' + (p.rate || '') + (p.duplex === 'half' ? ' (Halbduplex)' : '') : 'kein Link';
+  return p.poeUsed ? l + ` · PoE ${p.poeWatt ? p.poeWatt + ' W' : 'an'}` : l;
+}
+async function loadPorts(quiet) {
+  const id = detailId;
+  try {
+    const r = await fetch(`/api/devices/${encodeURIComponent(id)}/ports`, {cache: 'no-store'});
+    if (!r.ok) throw new Error(await r.text());
+    const ps = await r.json();
+    if (id !== detailId) return;
+    $('#dPortsAt').textContent = 'Stand ' + new Date().toLocaleTimeString('de-DE') + ' · alle 15 s neu';
+    if (!ps.length) { $('#dPorts').innerHTML = '<div class="hint">keine Ethernet-Ports</div>'; return; }
+    const hasPoe = ps.some(p => p.poe);
+    $('#dPorts').innerHTML = `<div class="portrow">${ps.map(p => `<div class="port ${portClass(p)}${p.sfp ? ' sfp' : ''}" title="${esc(p.name + (p.comment ? ' – ' + p.comment : '') + ': ' + portState(p))}"><i></i>${esc(p.name)}</div>`).join('')}</div>
+      <div class="wrap"><table><thead><tr><th>Port</th><th>Kommentar</th><th>Status</th><th>Bridge</th>${hasPoe ? '<th>PoE-Ausgang</th>' : ''}<th>MAC</th></tr></thead><tbody>${ps.map(p => `<tr>
+        <td><b>${esc(p.name)}</b>${p.sfp ? ' <span class="badge b-mute">SFP</span>' : ''}</td><td>${esc(p.comment || '')}</td>
+        <td>${p.disabled ? '<span class="mute">deaktiviert</span>' : p.link ? `<span style="color:var(--ok)">● Link</span> ${esc(p.rate || '')}${p.duplex === 'half' ? ' <span class="badge b-warn">Halbduplex</span>' : ''}` : '<span class="mute">○ kein Link</span>'}</td>
+        <td>${esc(p.bridge || '–')}</td>
+        ${hasPoe ? `<td>${!p.poe ? '<span class="mute">–</span>' : p.poeUsed ? `<span style="color:#f0a0a0">● versorgt${p.poeWatt ? ' · ' + esc(p.poeWatt) + ' W' : ''}</span>${p.link ? '' : ' <span class="badge b-bad">kein Link</span>'}` : `<span class="mute">${esc(p.poe)}${p.poeState ? ' · ' + esc(p.poeState) : ''}</span>`}</td>` : ''}
+        <td class="mono mute">${esc(p.mac || '')}</td></tr>`).join('')}</tbody></table></div>`;
+  } catch (e) { if (!quiet || !$('#dPorts .portrow')) $('#dPorts').innerHTML = `<div class="hint" style="color:#f0a0a0">Ports nicht lesbar: ${esc(e.message)}</div>`; }
+}
+async function loadFiles() {
+  const id = detailId;
+  try {
+    const r = await fetch(`/api/devices/${encodeURIComponent(id)}/files`, {cache: 'no-store'});
+    if (!r.ok) throw new Error(await r.text());
+    const fs = await r.json();
+    if (id !== detailId) return;
+    const size = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? (n / 1024).toFixed(1) + ' KB' : n + ' B';
+    $('#dFiles').innerHTML = fs.length ? `<div class="wrap"><table><thead><tr><th>Name</th><th>Typ</th><th>Größe</th><th>Zeit</th></tr></thead><tbody>${fs.map(f => `<tr><td class="mono">${esc(f.name)}</td><td>${esc(f.type)}</td><td>${f.type === 'directory' ? '' : size(f.size)}</td><td class="mute">${esc(f.time || '')}</td></tr>`).join('')}</tbody></table></div>
+      <div class="hint" style="margin-top:6px">Nur Anzeige. Backups holt der Manager selbst und löscht die Kopie auf dem Gerät danach.</div>` : '<div class="hint">keine Dateien</div>';
+  } catch (e) { $('#dFiles').innerHTML = `<div class="hint" style="color:#f0a0a0">Dateien nicht lesbar: ${esc(e.message)}</div>`; }
+}
+function diffHtml(lines) {
+  return lines.map(l => l.op === '…' ? `<span class="gap">${l.text ? esc(l.text) : '⋯'}</span>` : `<span class="${l.op === '+' ? 'add' : l.op === '-' ? 'del' : ''}">${esc(l.op + ' ' + l.text)}</span>`).join('\n');
+}
+async function loadHist() {
+  const id = detailId;
+  try {
+    const r = await fetch(`/api/devices/${encodeURIComponent(id)}/history`, {cache: 'no-store'});
+    if (!r.ok) throw new Error(await r.text());
+    const h = await r.json();
+    if (id !== detailId) return;
+    // Manager-Aktionen und Konfig-Unterschiede gemeinsam nach Zeit
+    const items = (h.manager || []).map(e => ({t: new Date(e.time), html: `<div class="${e.ok ? 'ok' : 'bad'}"><b>${esc(e.user)}</b> · ${esc(e.action)}${e.detail ? ` <span class="mute">– ${esc(e.detail)}</span>` : ''}${e.ok ? '' : ` <span class="badge b-bad">Fehler</span><div class="hint" style="color:#f0a0a0;white-space:normal">${esc(e.error || '')}</div>`}<div class="hint">${new Date(e.time).toLocaleString('de-DE')}</div></div>`}))
+      .concat((h.config || []).map(c => ({t: new Date(c.time), html: `<div class="cfg"><b>Konfiguration geändert</b> <span class="badge b-ok">+${c.added}</span><span class="badge b-bad">−${c.removed}</span>
+        <div class="hint">zwischen ${esc(c.from)} und ${esc(c.to)} · ${new Date(c.time).toLocaleString('de-DE')}</div>
+        ${c.tooBig ? '<div class="hint">Export zu groß für einen Zeilenvergleich – nur gezählt.</div>' : `<details><summary class="hint">Unterschied anzeigen (Passwörter maskiert)</summary><pre class="diff">${diffHtml(c.lines || [])}</pre></details>`}</div>`})))
+      .sort((a, b) => b.t - a.t);
+    const dev = h.device || [];
+    $('#dHist').innerHTML = `<div class="hint" style="margin:8px 0">Über den Manager (wer hat was ausgelöst) und Konfig-Unterschiede zwischen den gespeicherten Exports (nachts und vor jeder Änderung).</div>
+      ${items.length ? `<div class="tl">${items.slice(0, 150).map(x => x.html).join('')}</div>` : '<div class="hint">noch keine Einträge</div>'}
+      <h3 style="margin-top:16px">Am Gerät selbst <span class="hint" style="font-weight:normal">(RouterOS-Verlauf, auch Winbox/WebFig/SSH – beginnt nach jedem Neustart neu)</span></h3>
+      ${h.deviceError ? `<div class="hint" style="color:#f0a0a0">nicht lesbar: ${esc(h.deviceError)}</div>` : dev.length ? `<div class="wrap"><table><thead><tr><th>Zeit</th><th>Benutzer</th><th>Aktion</th></tr></thead><tbody>${dev.slice(0, 200).map(x => `<tr><td class="mute" style="white-space:nowrap">${esc(x.time)}</td><td><b>${esc(x.by || '–')}</b></td><td>${esc(x.action)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="hint">keine Änderungen seit dem letzten Neustart</div>'}`;
+  } catch (e) { $('#dHist').innerHTML = `<div class="hint" style="color:#f0a0a0">Verlauf nicht lesbar: ${esc(e.message)}</div>`; }
+}
+$('#detail').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-dx]'); if (!b) return;
+  const x = b.dataset.dx;
+  if (x === 'back') { location.hash = ''; }
+  if (x === 'ports') { $('#dPorts').innerHTML = '<div class="hint">lese Ports …</div>'; loadPorts(); }
+  if (x === 'hist') { $('#dHist').innerHTML = '<div class="hint">lese Verlauf …</div>'; loadHist(); }
+  if (x === 'files') { $('#dFiles').innerHTML = '<div class="hint">lese Dateien …</div>'; loadFiles(); }
+  if (x === 'loc') {
+    try { const r = await api('POST', `/api/devices/${encodeURIComponent(detailId)}/location`, {location: $('#dLoc').value}); flash(r.msg || 'gespeichert'); await load(); loadHist(); }
+    catch (err) { flash('Fehler: ' + err.message); }
+  }
+});
+
 (function tick() { setTimeout(() => load().finally(tick), (data.devices || []).some(busy) || (data.update || {}).busy ? 4000 : 15000); })();
 </script>
 </body>

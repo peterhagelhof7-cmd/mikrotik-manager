@@ -89,6 +89,38 @@ lehnt die Funktion ab (sonst sperrt er sich aus).
 
 Geräte werden alle 5 Minuten (`POLL_INTERVAL`) ausgelesen, WLAN-Clients jede Minute.
 
+### 4.1 Detailseite eines Geräts
+
+Klick auf den **Namen** in der Geräteliste öffnet die Detailseite (Adresse `#dev/<Geräte-ID>`,
+lässt sich als Lesezeichen speichern; „← Geräte“ oder Zurück im Browser führt zur Liste).
+
+- **Kopf:** IP, MAC, Modell, Seriennummer, RouterOS/Kanal, Firmware, Laufzeit, CPU/RAM.
+- **Standort:** freier Text (z. B. „Technikraum EG, Rack 2“), nur auf dem Manager
+  gespeichert, erscheint auch unter dem Namen in der Geräteliste.
+- **Einstellungen & Aktionen:** dieselben Knöpfe wie in der Liste (Einstellungen, WLAN,
+  Login, Update, Neustart, neu auslesen, ggf. SSH-Schlüssel übernehmen).
+- **Ports:** alle Ethernet- und SFP-Ports wie an der Gerätefront – **schwarz** kein Link,
+  **grün** Link, **rot** PoE versorgt ein Gerät, **rot blinkend** PoE liefert Strom, aber
+  es gibt keinen Link (Gerät hängt, Kabel halb defekt …), schraffiert = deaktiviert.
+  Darunter je Port Kommentar, Geschwindigkeit (Halbduplex markiert), Bridge, PoE-Status
+  mit Watt und MAC. Wird beim Öffnen und danach alle 15 s live gelesen.
+- **Konfig-Historie:**
+  - *über den Manager:* wer was ausgelöst hat (Umbenennen, Zugangsdaten, Update,
+    Neustart, WLAN, Rollback, Standort …) und das Ergebnis jedes Jobs; „Manager“ =
+    automatisch (nächtliches Backup nur bei Fehler, sonst steht es bei den Backups).
+  - *Konfiguration geändert:* Unterschied zwischen zwei aufeinanderfolgenden
+    gespeicherten Exports (`.rsc`, nachts und vor jeder Änderung) – so werden auch
+    Änderungen sichtbar, die jemand direkt am Gerät gemacht hat. Passwörter, WLAN- und
+    WireGuard-Schlüssel sind maskiert.
+  - *am Gerät selbst:* der RouterOS-Verlauf (`/system history`) mit Benutzername –
+    auch Änderungen per Winbox, WebFig oder SSH. RouterOS beginnt diese Liste nach
+    jedem Neustart neu.
+- **Backups auf dem Manager:** Backup jetzt, Liste zum Herunterladen/Zurückspielen.
+- **Dateien auf dem Gerät:** nur Anzeige (`/file`).
+
+Alles auf der Detailseite liest nur – außer dem Standort-Text und den Aktionsknöpfen, die
+wie in der Liste mit Rückfrage arbeiten.
+
 ## 5. Aktionen je Gerät
 
 Alle Aktionen laufen im Hintergrund und **nacheinander** (nie zwei Geräte
@@ -325,6 +357,7 @@ Alle Einstellungen sind Umgebungsvariablen – bei systemd in
 | `wlan-central.json` | zentrale WLAN-Konfiguration – **enthält WLAN-Passwörter** |
 | `migrations/` | Fortschritt laufender Umstellungen wireless → wifi |
 | `auto-update.json` | Einstellung und letztes Ergebnis der automatischen Updates |
+| `history/<Geräte-ID>.jsonl` | Verlauf je Gerät: wer hat über den Manager was ausgelöst (gekürzt auf die neuesten ~1000) |
 
 - Alle Dateien sind nur für den Dienst lesbar (0600/0700). Das Datenverzeichnis wie
   andere vertrauliche Daten sichern.

@@ -58,22 +58,22 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 	mux.Handle("GET /api/devices", w.auth(http.HandlerFunc(w.devices)))
 	mux.Handle("POST /api/discover", w.auth(http.HandlerFunc(w.discover)))
 	mux.Handle("POST /api/credentials/default", w.auth(http.HandlerFunc(w.setDefaultCred)))
-	mux.Handle("POST /api/devices/{id}/credentials", w.auth(http.HandlerFunc(w.setDeviceCred)))
-	mux.Handle("DELETE /api/devices/{id}/credentials", w.auth(http.HandlerFunc(w.delDeviceCred)))
+	mux.Handle("POST /api/devices/{id}/credentials", w.auth(w.rec("Eigene Zugangsdaten gesetzt", http.HandlerFunc(w.setDeviceCred))))
+	mux.Handle("DELETE /api/devices/{id}/credentials", w.auth(w.rec("Eigene Zugangsdaten gelöscht", http.HandlerFunc(w.delDeviceCred))))
 	mux.Handle("POST /api/devices/{id}/poll", w.auth(http.HandlerFunc(w.poll)))
 	mux.Handle("DELETE /api/devices/{id}", w.auth(http.HandlerFunc(w.forget)))
-	mux.Handle("POST /api/devices/{id}/hostkey/accept", w.auth(http.HandlerFunc(w.acceptHostKey)))
+	mux.Handle("POST /api/devices/{id}/hostkey/accept", w.auth(w.rec("SSH-Schlüssel übernommen", http.HandlerFunc(w.acceptHostKey))))
 	mux.Handle("GET /api/manager-user", w.auth(http.HandlerFunc(w.managerUser)))
-	mux.Handle("POST /api/manager-user", w.auth(http.HandlerFunc(w.ensureManagerUser)))
-	mux.Handle("POST /api/user-password", w.auth(http.HandlerFunc(w.setUserPassword)))
-	mux.Handle("POST /api/update", w.auth(http.HandlerFunc(w.jobAction(w.pl.StartUpdate))))
-	mux.Handle("POST /api/reboot", w.auth(http.HandlerFunc(w.jobAction(w.pl.StartReboot))))
-	mux.Handle("POST /api/devices/{id}/identity", w.auth(http.HandlerFunc(w.setIdentity)))
+	mux.Handle("POST /api/manager-user", w.auth(w.rec("Verwaltungsbenutzer eingerichtet", http.HandlerFunc(w.ensureManagerUser))))
+	mux.Handle("POST /api/user-password", w.auth(w.rec("Benutzer-Passwort gesetzt", http.HandlerFunc(w.setUserPassword))))
+	mux.Handle("POST /api/update", w.auth(w.rec("Update gestartet", http.HandlerFunc(w.jobAction(w.pl.StartUpdate)))))
+	mux.Handle("POST /api/reboot", w.auth(w.rec("Neustart gestartet", http.HandlerFunc(w.jobAction(w.pl.StartReboot)))))
+	mux.Handle("POST /api/devices/{id}/identity", w.auth(w.rec("Gerät umbenannt", http.HandlerFunc(w.setIdentity))))
 	mux.Handle("POST /api/devices/{id}/plan", w.auth(http.HandlerFunc(w.plan)))
-	mux.Handle("POST /api/devices/{id}/change", w.auth(http.HandlerFunc(w.change)))
+	mux.Handle("POST /api/devices/{id}/change", w.auth(w.rec("Änderung gestartet", http.HandlerFunc(w.change))))
 	mux.Handle("GET /api/devices/{id}/wlan", w.auth(http.HandlerFunc(w.wlan)))
 	mux.Handle("POST /api/wlan/preview", w.auth(http.HandlerFunc(w.wlanBulkPreview)))
-	mux.Handle("POST /api/wlan/apply", w.auth(http.HandlerFunc(w.wlanBulkApply)))
+	mux.Handle("POST /api/wlan/apply", w.auth(w.rec("WLAN im ganzen Netz geändert", http.HandlerFunc(w.wlanBulkApply))))
 	mux.Handle("POST /api/wlan/clients/refresh", w.auth(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		w.pl.RefreshAllClients(r.Context())
 		writeJSON(rw, map[string]bool{"ok": true})
@@ -112,8 +112,8 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 	mux.Handle("GET /api/central", w.auth(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { writeJSON(rw, w.pl.Central()) })))
 	mux.Handle("POST /api/central", w.auth(http.HandlerFunc(w.saveCentral)))
 	mux.Handle("POST /api/central/preview", w.auth(http.HandlerFunc(w.centralPreview)))
-	mux.Handle("POST /api/central/apply", w.auth(http.HandlerFunc(w.centralApply)))
-	mux.Handle("POST /api/backup", w.auth(http.HandlerFunc(w.jobAction(w.pl.StartBackup))))
+	mux.Handle("POST /api/central/apply", w.auth(w.rec("Zentrale WLAN-Konfiguration ausgerollt", http.HandlerFunc(w.centralApply))))
+	mux.Handle("POST /api/backup", w.auth(w.rec("Backup gestartet", http.HandlerFunc(w.jobAction(w.pl.StartBackup)))))
 	mux.Handle("GET /api/devices/{id}/backups", w.auth(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, w.pl.ListBackups(r.PathValue("id")))
 	})))
@@ -123,14 +123,19 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 		defer cancel()
 		writeJSON(rw, w.pl.CheckRestore(ctx, r.PathValue("id"), r.PathValue("name")))
 	})))
-	mux.Handle("POST /api/devices/{id}/backups/{name}/restore", w.auth(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /api/devices/{id}/backups/{name}/restore", w.auth(w.rec("Rollback gestartet", http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		id, name := r.PathValue("id"), r.PathValue("name")
 		if p := w.pl.BackupPath(id, name); p == "" || !strings.HasSuffix(name, ".backup") {
 			http.Error(rw, "nur .backup-Dateien", http.StatusBadRequest)
 			return
 		}
 		writeJSON(rw, map[string]any{"results": w.pl.StartRestore(id, name)})
-	})))
+	}))))
+	// Detailseite eines Geräts (nur lesend, außer dem Standort-Text)
+	mux.Handle("GET /api/devices/{id}/ports", w.auth(http.HandlerFunc(w.devicePorts)))
+	mux.Handle("GET /api/devices/{id}/files", w.auth(http.HandlerFunc(w.deviceFiles)))
+	mux.Handle("GET /api/devices/{id}/history", w.auth(http.HandlerFunc(w.deviceHistory)))
+	mux.Handle("POST /api/devices/{id}/location", w.auth(w.rec("Standort geändert", http.HandlerFunc(w.setLocation))))
 	return mux
 }
 
@@ -503,6 +508,7 @@ func (w *web) forget(rw http.ResponseWriter, r *http.Request) {
 	w.st.Delete(id)
 	w.vault.Delete("dev:" + id)
 	w.pl.hostKeys.Forget(id)
+	w.pl.hist.Forget(id)
 	w.st.save()
 	writeJSON(rw, map[string]bool{"ok": true})
 }

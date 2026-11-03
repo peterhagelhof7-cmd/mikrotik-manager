@@ -410,3 +410,30 @@ umstellen, die WLAN-Konfiguration wird dabei NICHT übernommen).
 - Beschädigte `ssh_known_hosts.json` führt jetzt zu einem Fehler statt zu einer
   leeren Liste (vorher wären beim nächsten Speichern alle Schlüssel verloren gegangen).
 - „Gerät entfernen“ löscht auch den gemerkten Schlüssel.
+
+## 2026-11-03 – Detailseite je Gerät (Ports, Konfig-Historie, Dateien, Standort)
+
+- **Eigene Seite statt Dialog** (`#dev/<id>` im selben Programm): verlinkbar, Zurück im
+  Browser geht, und die vorhandenen Knöpfe/Dialoge werden wiederverwendet (gleicher
+  Klick-Verteiler für Liste und Detailseite).
+- **Ports live lesen** (`/interface/ethernet` print + `monitor once`, PoE über
+  `/interface/ethernet/poe` print + `monitor once`), nicht im 5-Minuten-Abfragezyklus:
+  Linkstatus ändert sich schnell, und nur wer die Seite offen hat, braucht ihn
+  (alle 15 s, solange die Seite sichtbar ist). Farben nach Vorgabe des Users:
+  schwarz/grün/rot/rot blinkend; bei „Bewegung reduzieren“ schraffiert statt blinkend.
+- **Konfig-Historie aus drei Quellen**, weil keine allein reicht: Manager-Verlauf (wer
+  im Manager), RouterOS-`/system history` (wer am Gerät, aber nur seit dem letzten
+  Neustart), Unterschiede zwischen den ohnehin gespeicherten `.rsc`-Exports (dauerhaft,
+  auch für Änderungen per Winbox, aber ohne Benutzer). Geheimnisse in den Unterschieden
+  maskiert (auch `security.passphrase` von wifi – im Test aufgefallen).
+- **Manager-Verlauf je Gerät** als `history/<id>.jsonl` (mm hat kein Audit-Log):
+  Middleware `rec` an den ändernden Routen; Gerät aus Pfad, `ids` oder `results`;
+  Ergebnis aus HTTP-Status **und** `{"ok":false}`/`results` (sonst stünde ein
+  abgelehntes Umbenennen als erfolgreich drin – so in der Cloud passiert). Erfolgreiche
+  nächtliche Backups nicht, sonst ginge alles andere darin unter.
+- **Standort** in mm als freier Text am Gerät (`location`), nur auf dem Manager.
+- Tests: `detail_test.go` (Ports inkl. PoE ohne Link/SFP/deaktiviert/Sortierung,
+  Konfig-Unterschied mit Fortsetzungszeilen und Maskierung, Unterschiede aus Backups,
+  Verlauf + Middleware + Begrenzung, keine doppelten ids in der Oberfläche).
+  Oberfläche mit Mock-API per Headless-Chrome geprüft. Am echten Gerät (PoE-Switch)
+  noch nicht gelesen.
