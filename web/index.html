@@ -291,7 +291,7 @@ function row(d) {
     <td>${esc(d.wirelessPkg || '')}${central && central.enabled && (central.devices || []).includes(d.id) ? ' <span class="badge b-ok" title="WLAN wird zentral verwaltet (Tab „Zentrale WLAN-Verwaltung“).">zentral</span>' : ''}
       ${d.wirelessPkg && d.wlanClients ? `<div><button class="small" data-clients="${esc(d.id)}" title="Klappt die WLAN-Verbindungen dieses Geräts auf bzw. zu (SSID, Band, Signal, Rate, Dauer, MAC, IP). Wird jede Minute aktualisiert. Ändert nichts.">${openClients.has(d.id) ? '▾' : '▸'} ${d.wlanClients.length} Client${d.wlanClients.length === 1 ? '' : 's'}</button>${d.wlanClientsError ? ` <span class="badge b-warn" title="${esc(d.wlanClientsError)}">alt</span>` : ''}</div>` : ''}</td>
     <td>${uptime(d.uptime)}</td>
-    <td title="${esc(d.apiError)}">${st}${credTag}${d.apiError ? `<div class="hint">${esc(d.apiError)}</div>` : ''}</td>
+    <td title="${esc(d.apiError)}">${st}${credTag}${d.apiError ? `<div class="hint">${esc(d.apiError)}</div>` : ''}${d.hostKeyChanged ? `<div><span class="badge b-bad" title="Das Gerät meldet sich per SSH mit einem anderen Schlüssel als beim ersten Kontakt (${esc(d.hostKeyChanged)}). Backups, Updates und Rollback sind deshalb gesperrt.">SSH-Schlüssel geändert</span> <button class="small" data-hostkey="${esc(d.id)}" title="Nach Rückfrage: übernimmt genau diesen neuen SSH-Schlüssel des Geräts. Nur wählen, wenn das Gerät neu aufgesetzt wurde (Netinstall, Werksreset). Ändert nichts auf dem Gerät.">SSH-Schlüssel übernehmen</button></div>` : ''}</td>
     <td>${jobCell(d)}</td>
     <td><button class="small" data-upd="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Nach Rückfrage: speichert ein Backup auf dem Manager, installiert eine neuere RouterOS-Version (falls vorhanden) und danach die RouterBOARD-Firmware. Das Gerät startet dabei ein- bis zweimal neu (je ca. 1–2 Minuten offline).">Update</button> <button class="small" data-reboot="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Nach Rückfrage: startet das Gerät neu (ca. 1–2 Minuten offline) und prüft, dass es wieder erreichbar ist.">Neustart</button>
       <button class="small" data-cred="${esc(d.id)}" title="Öffnet einen Dialog für eigene Zugangsdaten nur dieses Geräts. Ändert nichts auf dem Gerät.">Login</button> <button class="small" data-poll="${esc(d.id)}" title="Liest das Gerät sofort neu aus (Version, Firmware, Status). Ändert nichts auf dem Gerät.">↻</button>
@@ -899,6 +899,18 @@ Das Gerät startet dabei ein- bis zweimal neu.`)) return;
     $('#bDlg').showModal();
   }
   if (b.dataset.cred) credDialog(data.devices.find(d => d.id === b.dataset.cred));
+  if (b.dataset.hostkey) {
+    const d = dev(b.dataset.hostkey);
+    if (!confirm(`${d.identity}: neuen SSH-Schlüssel übernehmen?
+
+Neuer Fingerabdruck:
+${d.hostKeyChanged}
+
+Nur bestätigen, wenn das Gerät neu aufgesetzt wurde (Netinstall, Werksreset, neuer Hostkey).
+Wurde nichts am Gerät gemacht, kann jemand die Verbindung abfangen – dann abbrechen und prüfen.`)) return;
+    const r = await api('POST', `/api/devices/${encodeURIComponent(d.id)}/hostkey/accept`, {fingerprint: d.hostKeyChanged});
+    flash(r.ok ? r.msg + ' – Backup/Update jetzt erneut starten' : 'Fehler: ' + r.msg); load();
+  }
   if (b.dataset.poll) { await api('POST', `/api/devices/${encodeURIComponent(b.dataset.poll)}/poll`); flash('wird ausgelesen …'); setTimeout(load, 3000); }
 });
 $('#credBtn').onclick = () => credDialog(null);

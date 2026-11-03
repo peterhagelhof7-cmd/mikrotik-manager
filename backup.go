@@ -74,30 +74,115 @@ func (p *Poller) BackupPath(id, name string) string {
 // --- SSH mit Trust-on-first-use: Der Hostkey jedes Geräts wird beim ersten
 // Kontakt gespeichert; ändert er sich später, wird die Verbindung verweigert.
 
+//
+// Ein abgelehnter neuer Schlüssel wird (nur im Speicher) vorgemerkt. In der
+// Oberfläche kann er nach Rückfrage übernommen werden – genau dieser Schlüssel
+// (Fingerabdruck muss passen), nicht „irgendeiner beim nächsten Kontakt“.
+
 type hostKeys struct {
-	mu   sync.Mutex
-	path string
+	mu      sync.Mutex
+	path    string
+	pending map[string]pendingHostKey // Geräte-ID → zuletzt abgelehnter Schlüssel
+}
+
+type pendingHostKey struct {
+	Key         string // wie in ssh_known_hosts.json: "<typ> <base64>"
+	Fingerprint string // SHA256:…
+	Seen        time.Time
+}
+
+func (h *hostKeys) load() (map[string]string, error) {
+	m := map[string]string{}
+	b, err := os.ReadFile(h.path)
+	if os.IsNotExist(err) {
+		return m, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, fmt.Errorf("%s ist beschädigt: %v", filepath.Base(h.path), err)
+	}
+	return m, nil
+}
+
+func (h *hostKeys) save(m map[string]string) error {
+	b, _ := json.MarshalIndent(m, "", "  ")
+	return writeFileAtomic(h.path, b, 0o600)
 }
 
 func (h *hostKeys) callback(id string) ssh.HostKeyCallback {
 	return func(_ string, _ net.Addr, key ssh.PublicKey) error {
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		m := map[string]string{}
-		if b, err := os.ReadFile(h.path); err == nil {
-			json.Unmarshal(b, &m)
+		m, err := h.load()
+		if err != nil {
+			// Nie stillschweigend mit leerer Liste weitermachen – sonst würden
+			// beim nächsten Speichern alle gemerkten Schlüssel überschrieben.
+			return err
 		}
 		got := key.Type() + " " + base64.StdEncoding.EncodeToString(key.Marshal())
 		if want, ok := m[id]; ok {
 			if want != got {
-				return fmt.Errorf("SSH-Hostkey von %s hat sich geändert (%s) – Verbindung verweigert; nach Neuinstallation Eintrag in ssh_known_hosts.json löschen", id, ssh.FingerprintSHA256(key))
+				fp := ssh.FingerprintSHA256(key)
+				if h.pending == nil {
+					h.pending = map[string]pendingHostKey{}
+				}
+				h.pending[id] = pendingHostKey{Key: got, Fingerprint: fp, Seen: time.Now()}
+				return fmt.Errorf("SSH-Hostkey von %s hat sich geändert (%s) – Verbindung verweigert; nach Neuinstallation in der Geräteliste „SSH-Schlüssel übernehmen“ wählen", id, fp)
 			}
+			delete(h.pending, id)
 			return nil
 		}
 		m[id] = got
-		b, _ := json.MarshalIndent(m, "", "  ")
-		return writeFileAtomic(h.path, b, 0o600)
+		return h.save(m)
 	}
+}
+
+// Changed liefert den Fingerabdruck eines zuletzt abgelehnten neuen Schlüssels ("" = keiner).
+func (h *hostKeys) Changed(id string) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.pending[id].Fingerprint
+}
+
+// Accept übernimmt den vorgemerkten neuen Schlüssel – nur wenn fp genau dazu passt.
+func (h *hostKeys) Accept(id, fp string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	p, ok := h.pending[id]
+	if !ok {
+		return fmt.Errorf("für dieses Gerät ist kein geänderter SSH-Schlüssel vorgemerkt")
+	}
+	if fp != p.Fingerprint {
+		return fmt.Errorf("Fingerabdruck passt nicht zum vorgemerkten Schlüssel (%s)", p.Fingerprint)
+	}
+	m, err := h.load()
+	if err != nil {
+		return err
+	}
+	m[id] = p.Key
+	if err := h.save(m); err != nil {
+		return err
+	}
+	delete(h.pending, id)
+	return nil
+}
+
+// Forget löscht den gemerkten Schlüssel eines Geräts (z. B. beim Entfernen des Geräts).
+func (h *hostKeys) Forget(id string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.pending, id)
+	m, err := h.load()
+	if err != nil {
+		return err
+	}
+	if _, ok := m[id]; !ok {
+		return nil
+	}
+	delete(m, id)
+	return h.save(m)
 }
 
 func (p *Poller) sshDial(ctx context.Context, id string) (*ssh.Client, error) {

@@ -62,6 +62,7 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 	mux.Handle("DELETE /api/devices/{id}/credentials", w.auth(http.HandlerFunc(w.delDeviceCred)))
 	mux.Handle("POST /api/devices/{id}/poll", w.auth(http.HandlerFunc(w.poll)))
 	mux.Handle("DELETE /api/devices/{id}", w.auth(http.HandlerFunc(w.forget)))
+	mux.Handle("POST /api/devices/{id}/hostkey/accept", w.auth(http.HandlerFunc(w.acceptHostKey)))
 	mux.Handle("GET /api/manager-user", w.auth(http.HandlerFunc(w.managerUser)))
 	mux.Handle("POST /api/manager-user", w.auth(http.HandlerFunc(w.ensureManagerUser)))
 	mux.Handle("POST /api/user-password", w.auth(http.HandlerFunc(w.setUserPassword)))
@@ -406,10 +407,12 @@ func (w *web) devices(rw http.ResponseWriter, r *http.Request) {
 		Clients   []WlanClient `json:"wlanClients"`
 		ClientsAt time.Time    `json:"wlanClientsAt,omitempty"`
 		ClientErr string       `json:"wlanClientsError,omitempty"`
+		// Fingerabdruck eines neuen, abgelehnten SSH-Hostkeys (Gerät neu aufgesetzt?)
+		HostKeyChanged string `json:"hostKeyChanged,omitempty"`
 	}
 	var out []row
 	for _, d := range w.st.List() {
-		x := row{Device: d, HasOwnCred: w.vault.Has("dev:" + d.ID)}
+		x := row{Device: d, HasOwnCred: w.vault.Has("dev:" + d.ID), HostKeyChanged: w.pl.hostKeys.Changed(d.ID)}
 		if bl := w.pl.ListBackups(d.ID); len(bl) > 0 {
 			x.Backups, x.LastBackup = len(bl), bl[0].Time
 		}
@@ -499,6 +502,27 @@ func (w *web) forget(rw http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	w.st.Delete(id)
 	w.vault.Delete("dev:" + id)
+	w.pl.hostKeys.Forget(id)
 	w.st.save()
 	writeJSON(rw, map[string]bool{"ok": true})
+}
+
+// acceptHostKey übernimmt nach Rückfrage in der Oberfläche den neuen SSH-Hostkey
+// eines Geräts. Der Fingerabdruck muss mitgeschickt werden und zum vorgemerkten
+// Schlüssel passen – so wird genau der Schlüssel übernommen, den der Benutzer gesehen hat.
+func (w *web) acceptHostKey(rw http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(rw, "ungültige Anfrage", http.StatusBadRequest)
+		return
+	}
+	if err := w.pl.hostKeys.Accept(id, req.Fingerprint); err != nil {
+		writeJSON(rw, map[string]any{"ok": false, "msg": err.Error()})
+		return
+	}
+	log.Printf("SSH-Hostkey von %s übernommen: %s", id, req.Fingerprint)
+	writeJSON(rw, map[string]any{"ok": true, "msg": "neuer SSH-Schlüssel übernommen"})
 }

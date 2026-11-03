@@ -29,7 +29,9 @@ Inhalt
   Managers erlauben.
 - **SSH an** (Port 22) – Backups werden per SFTP auf den Manager geholt. Der
   SSH-Schlüssel jedes Geräts wird beim ersten Kontakt gemerkt (TOFU); ändert er sich
-  später, verweigert der Manager das Backup.
+  später, verweigert der Manager das Backup. Nach einer Neuinstallation zeigt die
+  Geräteliste „SSH-Schlüssel geändert“ mit dem neuen Fingerabdruck; über
+  **SSH-Schlüssel übernehmen** wird nach Rückfrage genau dieser Schlüssel gespeichert.
 - Ein **Benutzer der Gruppe `full`** für die erste Anmeldung (z. B. `admin`). Danach
   legt der Manager einen eigenen Benutzer an (siehe 3.3).
 - Der Manager muss die Geräte per **MNDP-Broadcast** (UDP 5678) sehen, also im selben
@@ -339,7 +341,7 @@ Alle Einstellungen sind Umgebungsvariablen – bei systemd in
 | API „nicht erreichbar“ | API-Dienst aus, Port gefiltert oder auf andere Adressen beschränkt (`/ip service`) |
 | API „Login“ | Zugangsdaten falsch → Login-Knopf in der Zeile oder Standard-Zugangsdaten |
 | Gerät wird nicht gefunden | anderes Netzsegment → `SCAN_CIDRS`; MNDP auf dem Gerät aus (`/ip neighbor discovery-settings`) |
-| Backup: SSH-Schlüssel geändert | Gerät neu aufgesetzt? Eintrag in `ssh_known_hosts.json` löschen |
+| Backup: SSH-Schlüssel geändert | Gerät neu aufgesetzt? In der Geräteliste **SSH-Schlüssel übernehmen**. Wurde am Gerät nichts gemacht: erst Fingerabdruck prüfen (`ssh-keyscan <IP> \| ssh-keygen -lf -`) |
 | Umstellung: Paket nicht angeboten | Gerät hat keinen Internetzugang zum MikroTik-Server |
 | Clients eines VLAN-WLANs ohne Netz | Switch-Port liefert das VLAN nicht getaggt |
 | „eine frühere Änderung ist noch nicht bestätigt“ | Wächter einer abgebrochenen Änderung läuft noch – höchstens 5 Minuten warten |

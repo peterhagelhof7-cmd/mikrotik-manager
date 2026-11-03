@@ -106,6 +106,7 @@ umstellen, die WLAN-Konfiguration wird dabei NICHT übernommen).
   passwortgeschützte Weboberfläche herunterladbar, Namen per Regex geprüft.
 - SSH-Hostkeys: Trust-on-first-use in `ssh_known_hosts.json`; ein geänderter
   Key wird abgelehnt (nach Netinstall/Reset den Eintrag löschen).
+  Seit 2026-11-03: Knopf „SSH-Schlüssel übernehmen“ (siehe unten).
 - Update bricht ab, wenn das Backup nicht auf dem Manager ankommt.
 - Live geprüft am AP1: manuelles Backup (32 KB + 2,5 KB .rsc), Download
   bitgleich (SHA-256), Gerätekopie entfernt, Update-Ablauf mit Backup ok.
@@ -394,3 +395,18 @@ umstellen, die WLAN-Konfiguration wird dabei NICHT übernommen).
 - Benutzer stehen nicht im `/export` → keine Prüfung möglich, nur Warnung in der
   Rückfrage (Manager-Benutzer muss im Backup-Stand existieren).
 - Live noch nicht ausgeführt.
+
+## 2026-11-03 – Geänderten SSH-Hostkey in der Oberfläche übernehmen
+
+- Anlass: Gerät nach Neuinstallation, Backup scheitert mit „SSH-Hostkey hat sich
+  geändert“; bisher half nur Bearbeiten von `ssh_known_hosts.json` auf dem Server
+  (im Docker-Image ohne Shell umständlich).
+- Ein abgelehnter neuer Schlüssel wird im Speicher vorgemerkt und in der
+  Geräteliste mit Fingerabdruck angezeigt. „SSH-Schlüssel übernehmen“ speichert
+  nach Rückfrage **genau diesen** Schlüssel (API prüft den Fingerabdruck) – kein
+  „Eintrag löschen und beim nächsten Kontakt irgendeinen akzeptieren“.
+- Vormerkung nur im Speicher: nach einem Neustart des Managers erscheint sie beim
+  nächsten Backup-/Update-Versuch wieder.
+- Beschädigte `ssh_known_hosts.json` führt jetzt zu einem Fehler statt zu einer
+  leeren Liste (vorher wären beim nächsten Speichern alle Schlüssel verloren gegangen).
+- „Gerät entfernen“ löscht auch den gemerkten Schlüssel.
