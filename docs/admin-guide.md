@@ -332,6 +332,18 @@ Kabel und reichen dessen Netz weiter – alle WLANs und VLANs, auch den Verwaltu
   („Meshlink-Station … verbunden mit <AP-MAC>“), Zustand „verbunden (Meshlink aktiv)“.
 - **Durchsatz:** Ein Knoten teilt sein 5-GHz-Funkteil zwischen Meshlink und Clients – etwa
   die Hälfte des Durchsatzes eines AP mit Kabel.
+- **Kurz „nicht erreichbar“ beim Umschalten ist normal:** Zwischen Kabel weg und Meshlink
+  aktiv (bzw. zurück) ist der AP ca. 20–50 s nicht erreichbar. Fragt der Manager genau
+  dann ab, steht in der Geräteliste z. B. „Tunnel steht, aber Port 8728 antwortet nicht …
+  i/o timeout“ – die dort genannten Ursachen (Dienst, Firewall, Route) treffen dann nicht
+  zu. Bei der nächsten Abfrage (spätestens nach `POLL_INTERVAL`, sofort mit „↻“) ist der
+  AP wieder „ok“. Bleibt die Meldung länger als 2 Minuten: Detailseite → WLAN →
+  Zeile `mm-mesh-sta` (Zustand, verbunden mit) bzw. die WLAN-Meldungen prüfen.
+- **Probelauf 2026-11-03** (cAP ax + wAP ac, 5 GHz fest Kanal 36, VLAN 67): über den Manager
+  ausgerollt (je Gerät 9–14 s, danach ohne Abweichung), dann am Switch jeweils den Port
+  abgeschaltet (PoE lief weiter): beide Richtungen umgeschaltet, Manager erreichte den
+  Knoten durchgehend über den Tunnel, VLAN 67 lief über `mm-mesh-sta`, nach dem
+  Einschalten zurück aufs Kabel.
 
 ## 8. Das Sicherheitsnetz bei Änderungen
 
@@ -415,6 +427,7 @@ Alle Einstellungen sind Umgebungsvariablen – bei systemd in
 | API „nicht erreichbar“ | API-Dienst aus, Port gefiltert oder auf andere Adressen beschränkt (`/ip service`) |
 | API „Login“ | Zugangsdaten falsch → Login-Knopf in der Zeile oder Standard-Zugangsdaten |
 | Gerät wird nicht gefunden | anderes Netzsegment → `SCAN_CIDRS`; MNDP auf dem Gerät aus (`/ip neighbor discovery-settings`) |
+| Meshlink-AP kurz „nicht erreichbar“ (Port 8728 / i/o timeout) | Normal während des Umschaltens Kabel ↔ Meshlink (20–50 s); mit „↻“ neu auslesen. Länger als 2 min: Detailseite → WLAN → `mm-mesh-sta` prüfen (gleicher fester 5-GHz-Kanal an allen APs?) |
 | Backup: SSH-Schlüssel geändert | Gerät neu aufgesetzt? In der Geräteliste **SSH-Schlüssel übernehmen**. Wurde am Gerät nichts gemacht: erst Fingerabdruck prüfen (`ssh-keyscan <IP> \| ssh-keygen -lf -`) |
 | Umstellung: Paket nicht angeboten | Gerät hat keinen Internetzugang zum MikroTik-Server |
 | Clients eines VLAN-WLANs ohne Netz | Switch-Port liefert das VLAN nicht getaggt |
