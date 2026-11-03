@@ -140,6 +140,8 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 	mux.Handle("POST /api/devices/{id}/wwan", w.auth(w.rec("WWAN-Einstellung gespeichert", http.HandlerFunc(w.saveWwan))))
 	mux.Handle("GET /api/devices/{id}/wwan/usage.csv", w.auth(http.HandlerFunc(w.deviceWwanCSV)))
 	mux.Handle("GET /api/wwan/usage.csv", w.auth(http.HandlerFunc(w.allWwanCSV)))
+	mux.Handle("GET /api/topology", w.auth(http.HandlerFunc(w.topology)))
+	mux.Handle("POST /api/topology/root", w.auth(http.HandlerFunc(w.setTopoRoot)))
 	mux.Handle("POST /api/devices/{id}/location", w.auth(w.rec("Standort geändert", http.HandlerFunc(w.setLocation))))
 	return mux
 }

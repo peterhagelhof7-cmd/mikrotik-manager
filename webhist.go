@@ -287,3 +287,38 @@ func (w *web) allWwanCSV(rw http.ResponseWriter, r *http.Request) {
 	}
 	w.wwanCSV(rw, ids, month, name)
 }
+
+// --- Netzwerk-Baum (MAC-Liste) ---
+
+func (w *web) topology(rw http.ResponseWriter, r *http.Request) {
+	var ids []string
+	for _, d := range w.st.List() {
+		ids = append(ids, d.ID)
+	}
+	root := r.URL.Query().Get("root")
+	if root == "" {
+		root = w.pl.TopoRoot("")
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	writeJSON(rw, w.pl.Topology(ctx, ids, root))
+}
+
+func (w *web) setTopoRoot(rw http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Root string `json:"root"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 4096)).Decode(&req); err != nil {
+		http.Error(rw, "ungültige Anfrage", http.StatusBadRequest)
+		return
+	}
+	if _, ok := w.st.Get(req.Root); req.Root != "" && !ok {
+		http.Error(rw, "Gerät unbekannt", http.StatusBadRequest)
+		return
+	}
+	if err := w.pl.SetTopoRoot("", req.Root); err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(rw, map[string]any{"ok": true})
+}

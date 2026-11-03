@@ -64,6 +64,9 @@ footer{color:var(--muted);font-size:12px;padding:16px;text-align:center}
 .jobicon{flex:none;width:14px;text-align:center}
 @media (prefers-reduced-motion:reduce){.spin{animation:none;border-top-color:var(--warn)}}
 /* Detailseite eines Geräts */
+.ntree{margin:4px 0 4px 16px;border-left:1px dashed var(--line);padding-left:12px}
+.nport{margin:6px 0}.nport > b{font-family:ui-monospace,monospace}
+.nmac td{padding:3px 8px;font-size:13px}.nmac td:nth-child(1){width:150px}.nmac td:nth-child(2){width:120px}.nmac td:nth-child(3){width:220px}.nmac td:nth-child(4){width:70px}.nport table{width:auto}
 nav.tabs[hidden]{display:none}
 a.devlink{color:var(--fg);text-decoration:none;font-weight:700}a.devlink:hover{text-decoration:underline;color:var(--link)}
 .dhead{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.dhead h2{margin:0;font-size:20px}
@@ -110,7 +113,23 @@ pre.diff .add{color:#7fdca4}pre.diff .del{color:#f0a0a0}pre.diff .gap{color:var(
     <button role="tab" data-tab="tabDev" class="active" title="Zeigt die Geräteliste mit Update, Neustart, Einstellungen, WLAN und Backups.">Geräte</button>
     <button role="tab" data-tab="tabCentral" title="Zeigt die zentrale WLAN-Verwaltung: eine WLAN-Konfiguration, die auf allen ausgewählten Geräten gleich ausgerollt wird. Umschalten ändert nichts.">Zentrale WLAN-Verwaltung <span id="cBadge"></span></button>
     <button role="tab" data-tab="tabAuto" title="Zeigt die automatischen Updates: zu einer festen Zeit werden die Geräte nacheinander aktualisiert, auf Wunsch mit RouterBOARD-Firmware. Umschalten ändert nichts.">Automatische Updates <span id="aBadge"></span></button>
+    <button role="tab" data-tab="tabNet" title="Zeigt das Netzwerk als Baum: Wurzel ist der Router oder der zentrale Switch, darunter je Port die verbundenen MAC-Adressen (mit IP und Hostname) und die weiteren Geräte. Nur lesend.">Netzwerk</button>
   </nav>
+  <div id="tabNet" hidden>
+    <div class="card">
+      <h3>Netzwerk <span class="scopeName mute" style="font-weight:normal"></span></h3>
+      <div class="hint">MAC-Adressen je Port als Baum: Wurzel ist der Router oder der zentrale Switch, darunter je Port die dort verbundenen Geräte (MAC, IP und Hostname aus ARP/DHCP, VLAN, WLAN) und die weiteren verwalteten Geräte mit ihren Ports. Erkennung über die Nachbarn (MNDP/LLDP) und die MAC-Tabellen der Bridges; was hinter einem unverwalteten Switch hängt, erscheint am Port des nächsten verwalteten Geräts. Nur lesend – „Aktualisieren“ liest alle Geräte live aus (einige Sekunden).</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">
+        <label for="nRoot" style="margin:0">Wurzel</label>
+        <select id="nRoot" style="width:auto" title="Gerät oben im Baum – der Router oder der zentrale Switch. „automatisch“ nimmt das Gerät mit den meisten Nachbarn. Die Wahl wird gespeichert."></select>
+        <button class="primary" id="nLoad" title="Liest MAC-Tabellen, Nachbarn, ARP und DHCP von allen Geräten neu. Ändert nichts.">Aktualisieren</button>
+        <input id="nQ" placeholder="Suchen: MAC, IP, Hostname, Port, Gerät" style="flex:1;min-width:220px" title="Filtert den Baum; der Weg zur Fundstelle bleibt sichtbar.">
+        <button id="nCsv" title="Lädt die angezeigte Liste als CSV (Gerät, Port, MAC, IP, Hostname, VLAN).">CSV</button>
+        <span class="hint" id="nMsg"></span>
+      </div>
+    </div>
+    <div class="card" id="nTree"><div class="hint">„Aktualisieren“ liest die Geräte aus.</div></div>
+  </div>
   <div id="tabAuto" hidden>
     <div class="card">
       <h3>Automatische Updates</h3>
@@ -657,6 +676,7 @@ function renderCentralResult(rows) {
   };
 }
 document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => {
+  if (b.dataset.tab === 'tabNet') setTimeout(netOpen, 0);
   document.querySelectorAll('.tabs [data-tab]').forEach(x => { x.classList.toggle('active', x === b); $('#' + x.dataset.tab).hidden = x !== b; });
   if (b.dataset.tab === 'tabCentral' && !document.querySelector('#cNets tr') && central) renderCentral(central);
   if (b.dataset.tab === 'tabAuto') { loadAuto(); renderAutoState(); }
@@ -1022,7 +1042,7 @@ load().then(() => { loadCentral(); loadAuto(); });
 // solange ein Job läuft, öfter aktualisieren
 // --- Detailseite eines Geräts (#dev/<id>) ---
 let detailId = null, detailTimer = null, detailCache = {};
-const TAB_IDS = ['tabDev', 'tabCentral', 'tabAuto', 'tabTen', 'tabSys', 'tabBak', 'tabUsr'];
+const TAB_IDS = ['tabNet', 'tabDev', 'tabCentral', 'tabAuto', 'tabTen', 'tabSys', 'tabBak', 'tabUsr'];
 function detailDev() { return (data.devices || []).find(d => d.id === detailId); }
 function route() {
   const m = location.hash.match(/^#dev\/(.+)$/);
@@ -1334,6 +1354,93 @@ $('#detail').addEventListener('click', async e => {
   }
 });
 
+// --- Netzwerk-Baum (MAC-Liste) ---
+let netData = null;
+const NET_CLOUD = false;
+function netScopeHint() {
+  if (!NET_CLOUD) return '';
+  if (scope() === null) return 'Bitte oben einen Kunden wählen.';
+  if (centralSite() === null) return 'Dieser Kunde hat Standorte – bitte oben einen Standort wählen (der Baum gilt je Standort).';
+  return '';
+}
+function netOpen() {
+  const h = netScopeHint();
+  const devs = (data.devices || []).filter(d => typeof inView !== 'function' || (inView(d) && (!NET_CLOUD || centralSite() === null || (d.site || '') === centralSite())));
+  const cur = netData && netData.root && !netData.rootAuto ? netData.root.id : '';
+  $('#nRoot').innerHTML = opt('', cur, 'automatisch') + devs.slice().sort((a, b) => (a.identity || '').localeCompare(b.identity || '')).map(d => opt(d.id, cur, (d.identity || d.ip) + (d.model ? ' – ' + d.model : ''))).join('');
+  $('#nLoad').disabled = !!h;
+  if (h) { $('#nTree').innerHTML = `<div class="hint">${esc(h)}</div>`; netData = null; return; }
+  if (!netData) loadNet();
+}
+async function loadNet(root) {
+  if (netScopeHint()) return netOpen();
+  $('#nMsg').textContent = 'lese Geräte …'; $('#nLoad').disabled = true;
+  try {
+    const base = '';
+    const url = '/api/topology' + base + (root !== undefined ? (base ? '&' : '?') + 'root=' + encodeURIComponent(root) : '');
+    const r = await fetch(url, {cache: 'no-store'});
+    if (!r.ok) throw new Error(await r.text());
+    netData = await r.json();
+    $('#nMsg').textContent = 'Stand ' + new Date(netData.at).toLocaleTimeString('de-DE');
+    const cur = netData.root && !netData.rootAuto ? netData.root.id : '';
+    $('#nRoot').value = cur;
+    renderNet();
+  } catch (e) { $('#nMsg').textContent = '❌ ' + e.message; }
+  $('#nLoad').disabled = false;
+}
+function netMatch(q, ...vals) { return !q || vals.some(v => v && String(v).toLowerCase().includes(q)); }
+function netNode(n, q, path) {
+  const hit = netMatch(q, n.identity, n.model);
+  let ports = '';
+  for (const p of n.ports || []) {
+    const macs = (p.macs || []).filter(m => hit || netMatch(q, m.mac, m.ip, m.host, p.name, m.vlan));
+    const kids = (p.children || []).map(c => netNode(c, q, path.concat(n.identity, p.name))).filter(Boolean).join('');
+    if (q && !hit && !macs.length && !kids && !netMatch(q, p.name)) continue;
+    if (!macs.length && !kids && !(p.macs || []).length && !(p.children || []).length && q) continue;
+    const rows = macs.map(m => `<tr class="nmac"><td class="mono">${esc(m.mac)}</td><td class="mono">${esc(m.ip || '')}</td><td>${esc(m.host || '')}</td><td class="mute">${m.vlan && m.vlan !== '1' ? 'VLAN ' + esc(m.vlan) : ''}</td><td>${m.wireless ? '<span class="badge b-mute">WLAN</span>' : ''}</td></tr>`).join('');
+    const total = (p.macs || []).length;
+    ports += `<div class="nport"><span class="dot ${p.link ? 'on' : 'off'}" title="${p.link ? 'Link' : 'kein Link'}"></span><b>${esc(p.name)}</b> <span class="mute">${total ? total + ' MAC' + (total > 1 ? 's' : '') : (p.children || []).length ? '' : '–'}</span>
+      ${rows ? `<div class="wrap" style="margin:2px 0 0 18px"><table>${rows}</table></div>` : ''}${kids ? `<div class="ntree">${kids}</div>` : ''}</div>`;
+  }
+  if (q && !hit && !ports) return '';
+  return `<details open><summary><b>${esc(n.identity)}</b> <span class="mute">${esc(n.model || '')}${n.uplink ? ' · Uplink ' + esc(n.uplink) : ''}</span> <a href="#dev/${encodeURIComponent(n.id)}" class="hint" title="Detailseite des Geräts">Details ›</a></summary><div class="ntree">${ports || '<div class="hint">keine Ports mit Einträgen</div>'}</div></details>`;
+}
+function renderNet() {
+  const t = netData; if (!t) return;
+  const q = $('#nQ').value.trim().toLowerCase();
+  let h = '';
+  if (!t.root) h = '<div class="hint">Kein Gerät lesbar.</div>';
+  else {
+    h = `<div class="hint" style="margin-bottom:8px">Wurzel: <b>${esc(t.root.identity)}</b>${t.rootAuto ? ' (automatisch – oben fest wählen, z. B. den Router)' : ''}</div>` + (netNode(t.root, q, []) || '<div class="hint">keine Treffer</div>');
+  }
+  if ((t.unattached || []).length) h += `<h3 style="margin-top:14px">Nicht zugeordnet</h3><div class="hint">Diese Geräte sind lesbar, aber keinem Port im Baum zuzuordnen (kein Nachbar-Eintrag und ihre MAC nirgends gelernt – z. B. anderes Netz oder MNDP aus).</div>` + t.unattached.map(n => `<div>• <b>${esc(n.identity)}</b> <span class="mute">${esc(n.model || '')}</span></div>`).join('');
+  if ((t.unreached || []).length) h += `<h3 style="margin-top:14px">Nicht lesbar</h3>` + t.unreached.map(n => `<div>• <b>${esc(n.identity)}</b> <span class="hint" style="color:#f0a0a0">${esc(n.error || '')}</span></div>`).join('');
+  $('#nTree').innerHTML = h;
+}
+function netCSV() {
+  const t = netData; if (!t || !t.root) return;
+  const rows = [['Gerät', 'Port', 'MAC', 'IP', 'Hostname', 'VLAN', 'WLAN', 'Pfad']];
+  const walk = (n, path) => {
+    for (const p of n.ports || []) {
+      for (const m of p.macs || []) rows.push([n.identity, p.name, m.mac, m.ip || '', m.host || '', m.vlan || '', m.wireless ? 'ja' : '', path.concat(n.identity, p.name).join(' > ')]);
+      for (const c of p.children || []) walk(c, path.concat(n.identity, p.name));
+    }
+  };
+  walk(t.root, []);
+  const csv = '﻿' + rows.map(r => r.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(';')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv;charset=utf-8'}));
+  a.download = 'netzwerk-mac-liste.csv'; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+$('#nLoad').onclick = () => loadNet();
+$('#nQ').oninput = renderNet;
+$('#nCsv').onclick = netCSV;
+$('#nRoot').onchange = async () => {
+  const root = $('#nRoot').value;
+  try { await api('POST', '/api/topology/root' + '', {root}); } catch (e) { $('#nMsg').textContent = '❌ ' + e.message; return; }
+  loadNet(root);
+};
 (function tick() { setTimeout(() => load().finally(tick), (data.devices || []).some(busy) || (data.update || {}).busy ? 4000 : 15000); })();
 </script>
 </body>

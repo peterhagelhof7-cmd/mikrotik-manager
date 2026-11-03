@@ -495,3 +495,18 @@ Monats; nur erfassen, keine Schwelle; mm und Cloud; noch kein Testgerät.
   `check-gateway=ping`, Distanz 1), gesetzt vom DHCP-Client-Skript; LTE-Standardroute
   Distanz 2. Prüfadresse bewusst kein Client-DNS (sie hängt fest am WAN). Gerät ohne
   ether4/5: kein WAN, nur LTE.
+
+## 2026-11-03 – Netzwerk-Baum: welche MAC an welchem Port
+
+- **Live lesen statt sammeln:** MAC-Tabellen ändern sich ständig; der Baum wird beim
+  Öffnen/„Aktualisieren“ von allen Geräten gelesen (parallel), nichts im Abfragezyklus.
+- **Kanten über Nachbarn (MNDP/LLDP)**, Ersatz über die MAC-Tabelle: dort einhängen, wo die
+  MAC des Geräts am tiefsten gelernt wird, aber nie über einen Uplink (dort steht alles von
+  oben – sonst landet ein AP unter einem anderen).
+- **Keine Doppelten:** am Port eines Elterngeräts nur MACs, die das Kind dahinter nicht
+  selbst „unten“ sieht (Rest = z. B. unverwalteter Switch zwischen beiden).
+- **Wurzel wählbar und gespeichert**, automatisch = meiste Nachbar-Kanten.
+- Tests: `topology_test.go` (Router → Switch → AP mit WLAN, unverwalteter Switch, mit und
+  ohne Nachbar-Eintrag des AP, Wurzel automatisch/Switch, nicht lesbar, nicht zugeordnet).
+  Oberfläche per Mock mit echten Baumdaten aus dem Test. An echten Geräten noch nicht
+  angesehen.

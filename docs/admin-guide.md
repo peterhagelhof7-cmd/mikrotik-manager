@@ -171,6 +171,28 @@ Geräteliste). Auf der Detailseite steht dann der Abschnitt **WWAN / LTE-Router*
 **Stand:** am echten Chateau noch nicht ausgerollt (kein Testgerät) – vor dem ersten Kunden
 an einem Testgerät prüfen (PIN-Befehl, LTE-Monitor-Felder, Firewall-Reihenfolge).
 
+### 4.3 Netzwerk – MAC-Liste als Baum (Tab „Netzwerk“)
+
+Tab **Netzwerk**: zeigt, an welchem Port welche MAC-Adresse hängt – als Baum mit dem
+Router oder dem zentralen Switch als **Wurzel**.
+
+- **Aufbau:** Wurzel → Ports → dort gelernte MAC-Adressen (mit IP und Hostname aus ARP-
+  Tabellen und DHCP-Leases der Geräte, VLAN, WLAN-Kennzeichen) und die weiteren verwalteten
+  Geräte am jeweiligen Port, mit deren Ports usw. Der Uplink eines Geräts (Port Richtung
+  Wurzel) wird nicht aufgeführt; MACs, die ein tieferes Gerät selbst zeigt, stehen nur dort.
+- **Erkennung:** welches Gerät an welchem Port hängt, über die Nachbarn (MNDP/LLDP); fehlt
+  der Eintrag, über die MAC-Tabelle (dort, wo die MAC des Geräts am tiefsten gelernt wird –
+  nie über einen Uplink). Was hinter einem **unverwalteten Switch** hängt, erscheint am Port
+  des nächsten verwalteten Geräts.
+- **Wurzel:** „automatisch“ = Gerät mit den meisten Nachbarn; besser fest den Router bzw.
+  den zentralen Switch wählen – die Wahl wird gespeichert.
+- **Suchen** filtert nach MAC, IP, Hostname, Port oder Gerät (der Weg bleibt sichtbar),
+  **CSV** lädt die Liste mit Pfad. „Details ›“ führt zur Detailseite des Geräts.
+- **Nicht zugeordnet** = lesbar, aber an keinem Port erkennbar (kein Nachbar, MAC nirgends
+  gelernt); **nicht lesbar** = Gerät gerade nicht erreichbar.
+- Nur lesend: `interface/bridge/host`, `ip/neighbor`, `interface`, `ip/arp`,
+  `ip/dhcp-server/lease` – bei jedem „Aktualisieren“ live von allen Geräten.
+
 ## 5. Aktionen je Gerät
 
 Alle Aktionen laufen im Hintergrund und **nacheinander** (nie zwei Geräte
@@ -450,6 +472,7 @@ Alle Einstellungen sind Umgebungsvariablen – bei systemd in
 | `wlan-central.json` | zentrale WLAN-Konfiguration – **enthält WLAN-Passwörter** |
 | `migrations/` | Fortschritt laufender Umstellungen wireless → wifi |
 | `auto-update.json` | Einstellung und letztes Ergebnis der automatischen Updates |
+| `topology-root.json` | gewählte Wurzel des Netzwerk-Baums |
 | `wwan.json` | WWAN-Einstellung je Gerät (Netz, APN; PINs nur im Tresor) |
 | `wwan-usage/<Geräte-ID>.json` | Volumen über LTE je Monat |
 | `history/<Geräte-ID>.jsonl` | Verlauf je Gerät: wer hat über den Manager was ausgelöst (gekürzt auf die neuesten ~1000) |
