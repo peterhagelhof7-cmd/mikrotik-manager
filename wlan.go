@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/go-routeros/routeros/v3"
@@ -33,6 +34,7 @@ type WlanIf struct {
 	Clients    int    `json:"clients"`
 	Bridge     string `json:"bridge,omitempty"`
 	Hidden     bool   `json:"hidden,omitempty"` // SSID wird nicht ausgestrahlt
+	VLAN       int    `json:"vlan,omitempty"`   // PVID am Bridge-Port (Clients landen in diesem VLAN); 0 = keins/1
 	// Radio: Funkwerte, nur bei physischen Schnittstellen (Funkteilen)
 	Radio *RadioCfg `json:"radio,omitempty"`
 }
@@ -282,9 +284,13 @@ func countClients(ctx context.Context, cl *routeros.Client, cmd string) map[stri
 func readWLAN(ctx context.Context, cl *routeros.Client) (*wlanState, error) {
 	s := &wlanState{secs: map[string]map[string]string{}}
 	ports := map[string]string{}
-	if l, err := printAll(ctx, cl, "/interface/bridge/port/print", "=.proplist=interface,bridge"); err == nil {
+	pvid := map[string]int{}
+	if l, err := printAll(ctx, cl, "/interface/bridge/port/print", "=.proplist=interface,bridge,pvid"); err == nil {
 		for _, m := range l {
 			ports[m["interface"]] = m["bridge"]
+			if v, _ := strconv.Atoi(m["pvid"]); v > 1 {
+				pvid[m["interface"]] = v
+			}
 		}
 	}
 
@@ -306,7 +312,7 @@ func readWLAN(ctx context.Context, cl *routeros.Client) (*wlanState, error) {
 			x := &wlanIfc{WlanIf: WlanIf{
 				Name: m["name"], Master: masterOf(m), SSID: m["ssid"], Profile: m["security-profile"],
 				Disabled: m["disabled"] == "true", Running: m["running"] == "true",
-				Clients: clients[m["name"]], Bridge: ports[m["name"]], Chip: m["interface-type"],
+				Clients: clients[m["name"]], Bridge: ports[m["name"]], VLAN: pvid[m["name"]], Chip: m["interface-type"],
 			}}
 			x.raw, x.Hidden = m, m["hide-ssid"] == "true"
 			b := m["band"]
@@ -365,7 +371,7 @@ func readWLAN(ctx context.Context, cl *routeros.Client) (*wlanState, error) {
 			Auth: m["security.authentication-types"], Passphrase: m["security.passphrase"],
 			Profile:  m["security"],
 			Disabled: m["disabled"] == "true", Running: m["running"] == "true",
-			Clients: clients[m["name"]], Bridge: ports[m["name"]],
+			Clients: clients[m["name"]], Bridge: ports[m["name"]], VLAN: pvid[m["name"]],
 		}}
 		x.raw, x.Hidden = m, m["configuration.hide-ssid"] == "true"
 		if x.Profile == "" {

@@ -104,6 +104,11 @@ lässt sich als Lesezeichen speichern; „← Geräte“ oder Zurück im Browser
   es gibt keinen Link (Gerät hängt, Kabel halb defekt …), schraffiert = deaktiviert.
   Darunter je Port Kommentar, Geschwindigkeit (Halbduplex markiert), Bridge, PoE-Status
   mit Watt und MAC. Wird beim Öffnen und danach alle 15 s live gelesen.
+- **WLAN** (nur Geräte mit WLAN-Paket): je Schnittstelle eine Kachel – schwarz aus bzw.
+  sendet nicht, grün umrandet sendet ohne Clients, grün sendet mit Clients, schraffiert
+  deaktiviert; Tabelle mit SSID, Band, Funk (Breite/Kanal; virtuelle WLANs „wie
+  Funkteil“), Verschlüsselung, VLAN (PVID am Bridge-Port), Bridge und den verbundenen
+  Clients zum Aufklappen. Nur Anzeige, ändern über den Knopf „WLAN“. Jede Minute neu.
 - **Konfig-Historie:**
   - *über den Manager:* wer was ausgelöst hat (Umbenennen, Zugangsdaten, Update,
     Neustart, WLAN, Rollback, Standort …) und das Ergebnis jedes Jobs; „Manager“ =

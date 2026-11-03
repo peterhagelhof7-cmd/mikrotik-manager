@@ -78,6 +78,10 @@ a.devlink{color:var(--fg);text-decoration:none;font-weight:700}a.devlink:hover{t
 .port.dis i{opacity:.35;background:repeating-linear-gradient(45deg,#05070d 0 5px,#2a3150 5px 8px)}
 .port.sfp i{border-radius:2px;height:26px;margin-top:8px}
 @keyframes poeblink{50%{background:#05070d}}
+.port.wl i{border-radius:14px 14px 6px 6px}
+.port.wl-on i{border-color:var(--ok);background:#05070d;box-shadow:inset 0 0 0 2px var(--ok)}
+.port.wl-cl i{background:var(--ok);border-color:var(--ok)}
+.port .ssid{display:block;font-size:10px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (prefers-reduced-motion:reduce){.port.poe-nolink i{animation:none;background:repeating-linear-gradient(45deg,var(--bad) 0 6px,#05070d 6px 10px)}}
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted)}.legend .port{width:auto;display:flex;gap:6px;align-items:center}.legend .port i{width:18px;height:12px;margin:0;border-radius:3px}
 .tl{border-left:2px solid var(--line);margin-left:6px;padding-left:12px}
@@ -1016,20 +1020,28 @@ function openDetail(id) {
   setMainHidden(true);
   $('#detail').hidden = false;
   if (first) {
-    detailCache = {};
+    detailCache = {}; wlOpen.clear();
     $('#detail').innerHTML = `<div class="card" id="dHead"></div>
       <div class="card"><div class="dhead"><h3 style="margin:0">Ports</h3><button class="small" data-dx="ports" title="Liest Link- und PoE-Status sofort neu vom Gerät. Ändert nichts.">↻ neu lesen</button><span class="hint" id="dPortsAt"></span></div>
         <div class="legend" style="margin-top:8px"><span class="port"><i></i>kein Link</span><span class="port link"><i></i>Link</span><span class="port poe"><i></i>PoE versorgt Gerät</span><span class="port poe-nolink"><i></i>PoE an, aber kein Link</span><span class="port dis"><i></i>deaktiviert</span></div>
         <div id="dPorts"><div class="hint">lese Ports …</div></div></div>
+      <div class="card" id="dWlanCard" hidden><div class="dhead"><h3 style="margin:0">WLAN</h3><button class="small" data-dx="wlan" title="Liest die WLAN-Schnittstellen sofort neu vom Gerät. Ändert nichts – ändern über den Knopf „WLAN“ oben.">↻ neu lesen</button><span class="hint" id="dWlanAt"></span></div>
+        <div class="legend" style="margin-top:8px"><span class="port wl"><i></i>aus / sendet nicht</span><span class="port wl wl-on"><i></i>sendet, keine Clients</span><span class="port wl wl-cl"><i></i>sendet, mit Clients</span><span class="port wl dis"><i></i>deaktiviert</span></div>
+        <div id="dWlan"><div class="hint">lese WLAN …</div></div></div>
       <div class="card"><div class="dhead"><h3 style="margin:0">Konfig-Historie</h3><button class="small" data-dx="hist" title="Liest den Verlauf neu. Ändert nichts.">↻ neu lesen</button></div><div id="dHist"><div class="hint">lese Verlauf …</div></div></div>
       <div class="card"><h3>Backups auf dem Manager</h3><div id="dBak"></div></div>
       <div class="card"><div class="dhead"><h3 style="margin:0">Dateien auf dem Gerät</h3><button class="small" data-dx="files" title="Liest die Dateiliste neu vom Gerät. Ändert nichts.">↻ neu lesen</button></div><div id="dFiles"><div class="hint">lese Dateien …</div></div></div>`;
     window.scrollTo(0, 0);
-    loadPorts(); loadHist(); loadFiles();
+    loadPorts(); loadHist(); loadFiles(); loadWlan();
   }
   renderDetail();
   clearInterval(detailTimer);
-  detailTimer = setInterval(() => { if (!$('#detail').hidden && document.visibilityState === 'visible') loadPorts(true); }, 15000);
+  let ticks = 0;
+  detailTimer = setInterval(() => {
+    if ($('#detail').hidden || document.visibilityState !== 'visible') return;
+    loadPorts(true);
+    if (++ticks % 4 === 0) loadWlan(true); // WLAN jede Minute (die Clients liest der Manager ohnehin minütlich)
+  }, 15000);
 }
 function closeDetail() {
   if (detailId === null) return;
@@ -1068,6 +1080,7 @@ function renderDetail() {
     </div>
     ${d.job ? `<div style="margin-top:10px">${jobCell(d)}</div>` : ''}`;
   if (typing !== null) { $('#dLoc').value = typing; $('#dLoc').focus(); }
+  renderWlan();
   $('#dBak').innerHTML = `<div class="btns" style="justify-content:flex-start"><button class="small" data-backup="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Erstellt sofort ein Backup (Binär + Text-Export) auf dem Manager. Kein Neustart.">Backup jetzt</button>
       ${d.backups ? `<button class="small" data-blist="${esc(d.id)}" title="Liste aller Backups dieses Geräts: herunterladen oder zurückspielen.">${d.backups} Dateien · zuletzt vor ${esc(ago(d.lastBackup))} – herunterladen / zurückspielen</button>` : '<span class="hint">noch kein Backup</span>'}</div>
     <div class="hint" style="margin-top:6px">Jede Sicherung legt einen Text-Export (.rsc) ab – daraus entstehen die Konfig-Unterschiede in der Historie oben.</div>`;
@@ -1137,9 +1150,54 @@ async function loadHist() {
       ${h.deviceError ? `<div class="hint" style="color:#f0a0a0">nicht lesbar: ${esc(h.deviceError)}</div>` : dev.length ? `<div class="wrap"><table><thead><tr><th>Zeit</th><th>Benutzer</th><th>Aktion</th></tr></thead><tbody>${dev.slice(0, 200).map(x => `<tr><td class="mute" style="white-space:nowrap">${esc(x.time)}</td><td><b>${esc(x.by || '–')}</b></td><td>${esc(x.action)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="hint">keine Änderungen seit dem letzten Neustart</div>'}`;
   } catch (e) { $('#dHist').innerHTML = `<div class="hint" style="color:#f0a0a0">Verlauf nicht lesbar: ${esc(e.message)}</div>`; }
 }
+// WLAN-Schnittstellen (nur Anzeige; ändern über den Knopf „WLAN“)
+const wlOpen = new Set();
+function wlClass(x) {
+  if (x.disabled) return 'wl dis';
+  if (!x.running) return 'wl';
+  return x.clients > 0 ? 'wl wl-cl' : 'wl wl-on';
+}
+async function loadWlan(quiet) {
+  const id = detailId, d = detailDev();
+  if (!d || !d.wirelessPkg) { $('#dWlanCard').hidden = true; return; }
+  $('#dWlanCard').hidden = false;
+  try {
+    const r = await fetch(`/api/devices/${encodeURIComponent(id)}/wlan`, {cache: 'no-store'});
+    if (!r.ok) throw new Error(await r.text());
+    const info = await r.json();
+    if (id !== detailId) return;
+    detailCache.wlan = info;
+    $('#dWlanAt').textContent = 'Stand ' + new Date().toLocaleTimeString('de-DE') + ' · jede Minute neu';
+    renderWlan();
+  } catch (e) { if (!quiet || !detailCache.wlan) $('#dWlan').innerHTML = `<div class="hint" style="color:#f0a0a0">WLAN nicht lesbar: ${esc(e.message)}</div>`; }
+}
+function renderWlan() {
+  const info = detailCache.wlan, d = detailDev(); if (!info || !d) return;
+  const ifs = info.interfaces || [];
+  if (!ifs.length) { $('#dWlan').innerHTML = '<div class="hint">keine WLAN-Schnittstellen</div>'; return; }
+  const cl = d.wlanClients || [];
+  const managed = typeof central !== 'undefined' && central && central.enabled && (central.devices || []).includes(d.id);
+  const radio = x => x.radio ? [x.radio.width ? x.radio.width + ' MHz' : '', x.radio.freq && x.radio.freq !== 'auto' ? (typeof chLabel === 'function' ? chLabel(+x.radio.freq) : x.radio.freq + ' MHz') : 'Kanal automatisch'].filter(Boolean).join(' · ') : '<span class="mute">wie Funkteil ' + esc(x.master || '') + '</span>';
+  $('#dWlan').innerHTML = `<div class="hint">Paket <b>${esc(info.pkg)}</b>${info.country ? ' · Land ' + esc(cap(info.country)) : ''}${managed ? ' · <span class="badge b-ok" title="Das WLAN dieses Geräts wird zentral verwaltet.">zentral verwaltet</span>' : ''}</div>
+    <div class="portrow">${ifs.map(x => `<div class="port ${wlClass(x)}" title="${esc(x.name + ': ' + (x.ssid || '–') + ' · ' + (x.band || '') + ' · ' + (x.disabled ? 'deaktiviert' : x.running ? x.clients + ' Clients' : 'sendet nicht'))}"><i></i>${esc(x.name)}<span class="ssid">${esc(x.ssid || '')}</span></div>`).join('')}</div>
+    <div class="wrap"><table><thead><tr><th>Schnittstelle</th><th>SSID</th><th>Band</th><th>Funk</th><th>Verschlüsselung</th><th>VLAN</th><th>Bridge</th><th>Clients</th></tr></thead><tbody>${ifs.map(x => {
+      const mine = cl.filter(c => c.interface === x.name);
+      const open = wlOpen.has(x.name);
+      return `<tr><td><b>${esc(x.name)}</b>${x.master ? `<div class="hint">virtuell auf ${esc(x.master)}</div>` : ''}${x.chip ? `<div class="hint">${esc(x.chip)}</div>` : ''}</td>
+        <td>${esc(x.ssid || '–')}${x.hidden ? ' <span class="badge b-mute" title="SSID wird nicht ausgestrahlt">versteckt</span>' : ''}</td>
+        <td>${esc(x.band || '')}</td><td>${radio(x)}</td>
+        <td>${x.auth ? esc(typeof AUTH_NAMES !== 'undefined' && AUTH_NAMES[normAuth(x.auth)] || x.auth) : '<span class="badge b-warn">offen</span>'}</td>
+        <td>${x.vlan ? esc(String(x.vlan)) : '<span class="mute">–</span>'}</td><td>${esc(x.bridge || '–')}</td>
+        <td>${x.disabled ? '<span class="mute">deaktiviert</span>' : !x.running ? '<span class="mute">sendet nicht</span>' : mine.length ? `<button class="small" data-dx="wlcl" data-if="${esc(x.name)}" title="Klappt die verbundenen Clients dieser Schnittstelle auf bzw. zu. Ändert nichts.">${open ? '▾' : '▸'} ${mine.length}</button>` : esc(String(x.clients || 0))}</td></tr>`
+        + (open && mine.length ? `<tr class="sub"><td></td><td colspan="7"><div class="wrap" style="margin:0 0 6px">${clientsTable(mine.slice().sort((a, b) => (b.signal || 0) - (a.signal || 0)), false)}</div></td></tr>` : '');
+    }).join('')}</tbody></table></div>
+    <div class="hint" style="margin-top:6px">Clients laut letzter Abfrage des Managers (jede Minute). Ändern über den Knopf „WLAN“ oben.</div>`;
+}
 $('#detail').addEventListener('click', async e => {
   const b = e.target.closest('button[data-dx]'); if (!b) return;
   const x = b.dataset.dx;
+  if (x === 'wlan') { $('#dWlan').innerHTML = '<div class="hint">lese WLAN …</div>'; detailCache.wlan = null; loadWlan(); }
+  if (x === 'wlcl') { const n = b.dataset.if; wlOpen.has(n) ? wlOpen.delete(n) : wlOpen.add(n); renderWlan(); }
   if (x === 'back') { location.hash = ''; }
   if (x === 'ports') { $('#dPorts').innerHTML = '<div class="hint">lese Ports …</div>'; loadPorts(); }
   if (x === 'hist') { $('#dHist').innerHTML = '<div class="hint">lese Verlauf …</div>'; loadHist(); }
