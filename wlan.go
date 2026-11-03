@@ -30,7 +30,7 @@ type WlanIf struct {
 	Passphrase string `json:"passphrase"`
 	Profile    string `json:"profile,omitempty"` // Sicherheitsprofil
 	Disabled   bool   `json:"disabled"`
-	Running    bool   `json:"running"`
+	Running    bool   `json:"running"` // RouterOS-Flag; beim wifi-Paket erst mit verbundenem Client gesetzt – ob gesendet wird, steht in WlanStatus (monitor)
 	Clients    int    `json:"clients"`
 	Bridge     string `json:"bridge,omitempty"`
 	Hidden     bool   `json:"hidden,omitempty"` // SSID wird nicht ausgestrahlt
