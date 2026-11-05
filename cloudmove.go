@@ -15,23 +15,23 @@ import (
 	"github.com/go-routeros/routeros/v3"
 )
 
-// Umzug in die MikroTik-Manager Cloud: Geräte wechseln mit einem Mehrfach-Code der
-// Cloud von diesem Manager dorthin.
+// Umzug in die Cloud: Die MikroTik-Manager Cloud übernimmt die Verwaltung eines Geräts,
+// dieser Manager liest weiter mit. Nur einer schreibt, sonst überschreiben sich zentrales
+// WLAN und Updates gegenseitig, und die Wächter stören einander.
 //
 // Der Manager erledigt, was sonst der Einzeiler auf dem Gerät tut: WireGuard-
 // Schnittstelle anlegen, öffentlichen Schlüssel an die Cloud schicken, das
 // Abschluss-Skript auf dem Gerät ausführen. So braucht das Gerät kein /tool fetch
 // (im Device-Mode home gesperrt), und der Code landet nie auf dem Gerät.
 //
-// Beide Manager nutzen den Benutzer mikrotik-manager; das Abschluss-Skript setzt
-// dessen Passwort neu. Der Manager kommt danach mit diesem Benutzer nicht mehr aufs
-// Gerät, die offene Verbindung bleibt aber bestehen. Über sie wird geprüft, ob der
-// Tunnel steht (Handshake); ohne Handshake wird alles zurückgenommen. Ein
-// umgezogenes Gerät bleibt zur Information in der Liste, wird aber weder
-// ausgelesen noch geändert.
+// Die Cloud legt ihren eigenen Benutzer mikrotik-manager-cloud an; der Zugang dieses
+// Managers bleibt bestehen. Eine ältere Cloud ohne eigenen Benutzer würde dessen
+// Passwort überschreiben, deshalb wird sie abgelehnt (Check, register). Ohne Handshake
+// wird alles zurückgenommen. Ist die Cloud weg, gibt CloudRelease das Schreiben frei.
 
 const (
 	cloudIface       = "wg-mm"
+	cloudUser        = "mikrotik-manager-cloud" // Benutzer und Kommentar der Cloud
 	cloudHandshake   = 60 * time.Second
 	cloudFinishHead  = "# mikrotik-manager: Abschluss"
 	cloudStartMarker = "mikrotik-manager: Anmeldung"
@@ -41,6 +41,8 @@ var (
 	cloudCodeRe = regexp.MustCompile(`(https://[^\s"'/]+(?:/[^\s"'/]+)*?)/enroll/([A-Za-z0-9_-]{32})(?:-nocheck)?(?:\.rsc)?(?:["'\s]|$)`)
 	cloudErrRe  = regexp.MustCompile(`:error "(?:mikrotik-manager: )?(.*)"`)
 	cloudHTTP   = &http.Client{Timeout: 30 * time.Second}
+
+	errCloudOld = errors.New("Die Cloud ist zu alt: Sie würde den Zugang dieses Managers überschreiben. Erst die Cloud aktualisieren.")
 
 	// errCloudCode: Die Cloud lehnt den Code ab, weitere Geräte sind zwecklos.
 	errCloudCode = errors.New("Cloud lehnt den Code ab")
@@ -104,6 +106,9 @@ func (c cloudCode) Check(ctx context.Context) error {
 	if !strings.Contains(body, cloudStartMarker) {
 		return errors.New("Unter dieser Adresse antwortet kein MikroTik-Manager")
 	}
+	if !strings.Contains(body, cloudUser) {
+		return errCloudOld
+	}
 	return nil
 }
 
@@ -125,6 +130,9 @@ func (c cloudCode) register(ctx context.Context, pub, identity string) (string, 
 	}
 	if !strings.HasPrefix(body, cloudFinishHead) {
 		return "", errors.New("unerwartete Antwort der Cloud")
+	}
+	if !strings.Contains(body, cloudUser) {
+		return "", errCloudOld
 	}
 	return body, nil
 }
@@ -200,18 +208,16 @@ func (p *Poller) StartCloudMove(c cloudCode, ids []string) []Result {
 
 // cloudUndo nimmt das Abschluss-Skript zurück. Offen bleibt nur die Freigabe des
 // Hubs in /ip service: Sie gibt ohne Tunnel keinen Zugang.
-func cloudUndo(hadUser, createdIface bool, pw string) string {
+func cloudUndo(hadUser, createdIface bool) string {
 	var b strings.Builder
-	b.WriteString(try("/ip firewall filter remove [find comment=" + q(mmComment) + "]"))
+	b.WriteString(try("/ip firewall filter remove [find in-interface=" + cloudIface + "]"))
 	b.WriteString(try("/ip address remove [find interface=" + cloudIface + "]"))
 	b.WriteString(try("/interface wireguard peers remove [find interface=" + cloudIface + "]"))
 	if createdIface {
 		b.WriteString(try("/interface wireguard remove [find name=" + cloudIface + "]"))
 	}
-	if hadUser {
-		b.WriteString(try("/user set [find name=" + q(mgrUser) + "] password=" + q(pw)))
-	} else {
-		b.WriteString(try("/user remove [find name=" + q(mgrUser) + "]"))
+	if !hadUser {
+		b.WriteString(try("/user remove [find name=" + q(cloudUser) + "]"))
 	}
 	return b.String()
 }
@@ -261,7 +267,7 @@ func (p *Poller) doCloudMove(ctx context.Context, c cloudCode, id string, x *Job
 
 	rctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
-	uid, err := findUser(rctx, cl, mgrUser)
+	uid, err := findUser(rctx, cl, cloudUser)
 	if err != nil {
 		return err
 	}
@@ -271,7 +277,7 @@ func (p *Poller) doCloudMove(ctx context.Context, c cloudCode, id string, x *Job
 	}
 	created := len(l) == 0
 	if created {
-		if _, err := cl.RunContext(rctx, "/interface/wireguard/add", "=name="+cloudIface, "=comment="+mmComment); err != nil {
+		if _, err := cl.RunContext(rctx, "/interface/wireguard/add", "=name="+cloudIface, "=comment="+cloudUser); err != nil {
 			return fmt.Errorf("WireGuard anlegen: %w", err)
 		}
 		time.Sleep(time.Second)
@@ -301,19 +307,12 @@ func (p *Poller) doCloudMove(ctx context.Context, c cloudCode, id string, x *Job
 	if runErr == nil {
 		p.jobs.step(x, name, "warte auf den Tunnel (bis %s) …", cloudHandshake)
 		if up, runErr = cloudTunnelUp(rctx, cl, cloudHandshake); runErr != nil {
-			// Passwort geändert, Verbindung weg: Rücknahme ist nicht mehr möglich.
 			return fmt.Errorf("Verbindung zum Gerät verloren (%v) – in der Cloud prüfen, ob es angekommen ist", runErr)
 		}
 	}
 	if !up {
-		cred, _ := p.vault.For(id)
-		if cred.User != mgrUser {
-			if cred, err = p.managerCred(); err != nil {
-				return fmt.Errorf("Tunnel steht nicht, Verwaltungsbenutzer unbekannt: %w", err)
-			}
-		}
 		p.jobs.step(x, name, "kein Tunnel – nehme die Änderung zurück …")
-		if err := p.runQuiet(rctx, cl, cloudUndo(uid != "", created, cred.Password), 30*time.Second); err != nil {
+		if err := p.runQuiet(rctx, cl, cloudUndo(uid != "", created), 30*time.Second); err != nil {
 			return fmt.Errorf("Tunnel steht nicht, Rücknahme fehlgeschlagen: %v", err)
 		}
 		if runErr != nil {
@@ -323,8 +322,19 @@ func (p *Poller) doCloudMove(ctx context.Context, c cloudCode, id string, x *Job
 	}
 	now := time.Now()
 	p.st.Update(id, func(x *Device) {
-		x.CloudURL, x.CloudAt, x.APIStatus, x.APIError = c.Base, now, "moved", ""
+		x.CloudURL, x.CloudAt = c.Base, now
 	})
-	p.jobs.step(x, name, "Tunnel steht – das Gerät wird jetzt von der Cloud verwaltet")
+	p.jobs.step(x, name, "Tunnel steht – die Cloud verwaltet das Gerät, dieser Manager liest mit")
 	return nil
+}
+
+// CloudRelease gibt das Schreiben wieder frei, z. B. wenn die Cloud ausfällt oder das Gerät
+// dort entfernt wurde. Das Gerät selbst ändert sich nicht.
+func (p *Poller) CloudRelease(id string) Result {
+	d, ok := p.st.Get(id)
+	if !ok {
+		return Result{ID: id, Msg: "Gerät unbekannt"}
+	}
+	p.st.Update(id, func(x *Device) { x.CloudURL, x.CloudAt = "", time.Time{} })
+	return Result{ID: id, Identity: d.Identity, OK: true, Msg: "dieser Manager verwaltet das Gerät wieder"}
 }

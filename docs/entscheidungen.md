@@ -538,11 +538,13 @@ Monats; nur erfassen, keine Schwelle; mm und Cloud; noch kein Testgerät.
 - **Der Manager meldet an, nicht das Gerät:** Er schickt den öffentlichen Schlüssel selbst an
   `/enroll/<Code>` und führt die Antwort per Skript aus. Damit entfällt `/tool fetch` (Device-Mode
   `home`), und der Code liegt nie auf dem Gerät. Die Cloud bleibt dafür unverändert.
-- **Beide Manager nutzen `mikrotik-manager`:** Das Abschluss-Skript setzt das Passwort neu, der
-  Umzug ist also endgültig. Geprüft wird über die offene Verbindung (Handshake); ohne Handshake
-  wird zurückgenommen, sonst wäre das Gerät für beide Manager weg.
-- **Umgezogene Geräte bleiben sichtbar**, aber ohne Abfragen: Fehlversuche würden sonst das Log
-  der Geräte füllen, und MNDP brächte gelöschte Einträge ohnehin zurück.
+- **Die Cloud hat einen eigenen Benutzer** (`mikrotik-manager-cloud`), dieser Manager behält seinen
+  Zugang. Eine ältere Cloud nutzt denselben Namen und überschriebe das Passwort, deshalb lehnen
+  `Check` und `register` sie ab. Ohne Handshake wird zurückgenommen.
+- **Cloud schreibt, lokal liest mit:** Getrennte Benutzer verhindern keinen Streit um zentrales WLAN,
+  Updates, Neustarts oder Wächter (`mm-undo`, `mmApplied`). Gesperrt wird in `startJobs` und bei den
+  direkten Aktionen, Backups bleiben erlaubt. So bleibt das Gerät auch bei einem Cloud-Ausfall
+  erreichbar; **zurückholen** gibt das Schreiben frei.
 - Fremde Antworten laufen nie als Skript: nur HTTPS, und die Antwort muss mit dem Kopf des
   Abschluss-Skripts beginnen. Fehlermeldungen enthalten den Code nicht.
 

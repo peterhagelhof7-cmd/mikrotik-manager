@@ -108,7 +108,7 @@ func (p *Poller) pollOne(ctx context.Context, id string) {
 	}()
 
 	d, ok := p.st.Get(id)
-	if !ok || d.IP == "" || d.Moved() {
+	if !ok || d.IP == "" {
 		return
 	}
 	cred, src := p.vault.For(id)

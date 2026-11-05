@@ -144,6 +144,9 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 	mux.Handle("POST /api/topology/root", w.auth(http.HandlerFunc(w.setTopoRoot)))
 	mux.Handle("POST /api/cloud-move/preview", w.auth(http.HandlerFunc(w.cloudPreview)))
 	mux.Handle("POST /api/cloud-move/apply", w.auth(w.rec("Umzug in die Cloud gestartet", http.HandlerFunc(w.cloudApply))))
+	mux.Handle("POST /api/devices/{id}/cloud-release", w.auth(w.rec("Verwaltung aus der Cloud zurückgeholt", http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		writeJSON(rw, w.pl.CloudRelease(r.PathValue("id")))
+	}))))
 	mux.Handle("POST /api/devices/{id}/location", w.auth(w.rec("Standort geändert", http.HandlerFunc(w.setLocation))))
 	return mux
 }

@@ -61,6 +61,12 @@ func (p *Poller) forEach(ids []string, fn func(d Device) Result) []Result {
 		if !ok {
 			continue
 		}
+		if d.Moved() {
+			mu.Lock()
+			out = append(out, Result{ID: d.ID, Identity: d.Identity, Msg: errMoved.Error()})
+			mu.Unlock()
+			continue
+		}
 		wg.Add(1)
 		sem <- struct{}{}
 		go func() {
@@ -81,9 +87,6 @@ func (p *Poller) forEach(ids []string, fn func(d Device) Result) []Result {
 func (p *Poller) withClient(ctx context.Context, d Device, fn func(ctx context.Context, cl *routeros.Client) error) error {
 	if d.IP == "" {
 		return fmt.Errorf("keine IP bekannt")
-	}
-	if d.Moved() {
-		return errMoved
 	}
 	c, _ := p.vault.For(d.ID)
 	cl, err := p.dial(ctx, d.IP, c)

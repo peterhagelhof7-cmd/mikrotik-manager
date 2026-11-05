@@ -309,10 +309,15 @@ Gerät braucht darum kein `/tool fetch` (im Device-Mode `home` gesperrt), nur Ro
 ausgehend UDP zum Cloud-Hub. Je Gerät: Backup, Tunnel einrichten, bis zu 60 s auf den Handshake
 warten. Ohne Handshake wird alles zurückgenommen; den Eintrag in der Cloud dann „Vergessen“.
 
-Danach verwaltet **nur die Cloud** das Gerät: Sie setzt das Passwort des Benutzers
-`mikrotik-manager` neu, dieser Manager kommt nicht mehr darauf. Das Gerät bleibt als „in der
-Cloud“ in der Liste und wird nicht mehr ausgelesen. Backups bleiben hier liegen. „Vergessen“
-entfernt den Eintrag; findet MNDP das Gerät wieder, erscheint es als neues Gerät.
+Danach **schreibt nur die Cloud**, dieser Manager liest mit: Status, Netzwerk-Baum, WLAN-Clients und
+Backups laufen weiter, Änderungen, Updates, Neustart, Rollback und zentrales WLAN sind gesperrt. Sonst
+würden sich beide Manager gegenseitig überschreiben. Die Cloud legt ihren eigenen Benutzer
+`mikrotik-manager-cloud` an, der Zugang dieses Managers bleibt bestehen.
+
+Fällt die Cloud aus oder wird das Gerät dort entfernt, gibt **zurückholen** in der Gerätezeile das
+Schreiben wieder frei. Das ändert nichts am Gerät, der Tunnel bleibt stehen.
+
+Die Cloud muss den eigenen Benutzer schon kennen; eine ältere Cloud lehnt dieser Manager beim Prüfen ab.
 
 ## 6. WLAN
 

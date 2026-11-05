@@ -100,6 +100,10 @@ func validIdentity(n string) error {
 func (p *Poller) SetIdentity(ctx context.Context, id, name string) Result {
 	d, _ := p.st.Get(id)
 	r := Result{ID: id, Identity: d.Identity}
+	if d.Moved() {
+		r.Msg = errMoved.Error()
+		return r
+	}
 	name = strings.TrimSpace(name)
 	if err := validIdentity(name); err != nil {
 		r.Msg = err.Error()

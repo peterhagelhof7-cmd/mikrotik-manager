@@ -133,9 +133,6 @@ func (p *Poller) session(ctx context.Context, id string) (*routeros.Client, erro
 	if !ok || d.IP == "" {
 		return nil, fmt.Errorf("Gerät/IP unbekannt")
 	}
-	if d.Moved() {
-		return nil, errMoved
-	}
 	c, _ := p.vault.For(id)
 	return p.dial(ctx, d.IP, c)
 }
@@ -173,8 +170,8 @@ func (p *Poller) waitReboot(ctx context.Context, id string, before int64, timeou
 	return devState{}, fmt.Errorf("Gerät ist nach %s nicht neu gestartet zurück", timeout)
 }
 
-// errMoved: Das Gerät wird von der Cloud verwaltet (cloudmove.go).
-var errMoved = fmt.Errorf("in die Cloud umgezogen")
+// errMoved: Nur die Cloud schreibt auf dieses Gerät (cloudmove.go).
+var errMoved = fmt.Errorf("wird von der Cloud verwaltet, hier nur lesend")
 
 // run führt cmd aus; Abbrüche der Verbindung durch den Neustart sind erwartet.
 func runIgnoringDisconnect(ctx context.Context, cl *routeros.Client, timeout time.Duration, cmd ...string) error {
@@ -241,7 +238,7 @@ func (p *Poller) startJobs(ctx context.Context, ids []string, kind string, fn fu
 		if !ok {
 			continue
 		}
-		if d.Moved() {
+		if d.Moved() && kind != "backup" { // Backups ändern nichts an der Konfiguration
 			out = append(out, Result{ID: id, Identity: d.Identity, Msg: errMoved.Error()})
 			continue
 		}

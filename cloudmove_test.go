@@ -44,14 +44,14 @@ func cloudServer(t *testing.T, used *bool) cloudCode {
 			return
 		}
 		if r.Method == http.MethodGet {
-			io.WriteString(rw, "# mikrotik-manager: Anmeldung\n:local ver\n")
+			io.WriteString(rw, "# mikrotik-manager: Anmeldung\n/interface wireguard add comment=\"mikrotik-manager-cloud\"\n")
 			return
 		}
 		b, _ := io.ReadAll(r.Body)
 		if string(b) != "PUB\nAP Keller" || r.Header.Get("Content-Type") != "text/plain" {
 			t.Errorf("Anfrage: %q", b)
 		}
-		io.WriteString(rw, "# mikrotik-manager: Abschluss\n/ip address add\n")
+		io.WriteString(rw, "# mikrotik-manager: Abschluss\n/user add name=\"mikrotik-manager-cloud\"\n")
 	}))
 	old := cloudHTTP
 	cloudHTTP = srv.Client()
@@ -105,16 +105,39 @@ func TestCloudErrorHidesCode(t *testing.T) {
 	}
 }
 
+func TestCloudOldRefused(t *testing.T) {
+	// Eine Cloud ohne eigenen Benutzer überschriebe das Passwort dieses Managers.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			io.WriteString(rw, "# mikrotik-manager: Anmeldung\n/interface wireguard add comment=\"mikrotik-manager\"\n")
+			return
+		}
+		io.WriteString(rw, "# mikrotik-manager: Abschluss\n/user set [find name=\"mikrotik-manager\"] password=\"x\"\n")
+	}))
+	defer srv.Close()
+	old := cloudHTTP
+	cloudHTTP = srv.Client()
+	defer func() { cloudHTTP = old }()
+	c := cloudCode{Base: srv.URL, Token: testTok}
+	if err := c.Check(context.Background()); !errors.Is(err, errCloudOld) {
+		t.Fatal(err)
+	}
+	if s, err := c.register(context.Background(), "PUB", "x"); !errors.Is(err, errCloudOld) || s != "" {
+		t.Fatal(s, err)
+	}
+}
+
 func TestCloudUndo(t *testing.T) {
-	s := cloudUndo(true, true, "ge$heim")
-	for _, w := range []string{`/ip firewall filter remove [find comment="mikrotik-manager"]`, "peers remove [find interface=wg-mm]",
-		"/interface wireguard remove [find name=wg-mm]", `/user set [find name="mikrotik-manager"] password="ge\$heim"`} {
+	s := cloudUndo(false, true)
+	for _, w := range []string{"/ip firewall filter remove [find in-interface=wg-mm]", "peers remove [find interface=wg-mm]",
+		"/interface wireguard remove [find name=wg-mm]", `/user remove [find name="mikrotik-manager-cloud"]`} {
 		if !strings.Contains(s, w) {
 			t.Errorf("fehlt %s in\n%s", w, s)
 		}
 	}
-	s = cloudUndo(false, false, "x")
-	if !strings.Contains(s, `/user remove [find name="mikrotik-manager"]`) || strings.Contains(s, "/interface wireguard remove") {
+	// Der Benutzer dieses Managers bleibt immer unangetastet.
+	s = cloudUndo(true, false)
+	if strings.Contains(s, "/user") || strings.Contains(s, "/interface wireguard remove") {
 		t.Error(s)
 	}
 }
@@ -137,7 +160,7 @@ func TestCloudBlock(t *testing.T) {
 	}
 }
 
-func TestMovedDeviceStaysOut(t *testing.T) {
+func TestMovedDeviceReadOnly(t *testing.T) {
 	cfg := Config{DataDir: t.TempDir(), APIPort: 1}
 	st := newStore(cfg.DataDir)
 	v, err := openVault(cfg.DataDir)
@@ -145,20 +168,37 @@ func TestMovedDeviceStaysOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	id, _ := st.Observe(Device{SoftwareID: "A", IP: "127.0.0.1", Identity: "AP"}, "api")
-	st.Update(id, func(d *Device) { d.CloudURL, d.APIStatus = "https://x", "moved" })
+	st.Update(id, func(d *Device) { d.CloudURL, d.APIStatus = "https://x", "ok" })
 	p := newPoller(cfg, st, v)
-	if res := p.StartBackup([]string{id}); len(res) != 1 || res[0].OK {
-		t.Fatalf("%+v", res)
+	want := errMoved.Error()
+	for name, res := range map[string][]Result{
+		"Update":   p.StartUpdate([]string{id}),
+		"Neustart": p.StartReboot([]string{id}),
+		"Änderung": p.StartChange([]string{id}, ChangeReq{Action: "snmp", SNMPOn: true}),
+		"Benutzer": p.EnsureManagerUser(context.Background(), []string{id}),
+		"Passwort": p.SetUserPassword(context.Background(), []string{id}, "admin", "geheimes-passwort"),
+		"Name":     {p.SetIdentity(context.Background(), id, "neu")},
+		"Rollback": p.StartRestore(id, "x.backup"),
+	} {
+		if len(res) != 1 || res[0].OK || res[0].Msg != want {
+			t.Errorf("%s: %+v", name, res)
+		}
 	}
-	if _, err := p.session(context.Background(), id); err == nil || !strings.Contains(err.Error(), "umgezogen") {
+	// Lesen und Backups laufen weiter.
+	if _, err := p.session(context.Background(), id); err != nil && strings.Contains(err.Error(), "Cloud") {
 		t.Fatal(err)
 	}
-	d, _ := st.Get(id)
-	if err := p.withClient(context.Background(), d, nil); err == nil {
-		t.Fatal("withClient")
+	if res := p.StartBackup([]string{id}); len(res) != 1 || !res[0].OK {
+		t.Fatalf("Backup: %+v", res)
 	}
 	p.pollOne(context.Background(), id)
-	if d, _ := st.Get(id); d.APIStatus != "moved" {
-		t.Fatal(d.APIStatus)
+	if d, _ := st.Get(id); d.LastPoll.IsZero() {
+		t.Fatal("wird nicht mehr abgefragt")
+	}
+	if r := p.CloudRelease(id); !r.OK {
+		t.Fatalf("%+v", r)
+	}
+	if d, _ := st.Get(id); d.Moved() {
+		t.Fatal("noch umgezogen")
 	}
 }

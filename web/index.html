@@ -120,7 +120,7 @@ pre.diff .add{color:#7fdca4}pre.diff .del{color:#f0a0a0}pre.diff .gap{color:var(
     <div class="card">
       <h3>Umzug in die Cloud</h3>
       <div class="hint">Bringt Geräte in die MikroTik-Manager Cloud. Dort unter <b>Kunden &amp; Anmeldung</b> einen <b>Mehrfach-Code</b> erzeugen und den Befehl hier einfügen. Die Geräte landen bei dem Kunden und Standort des Codes.<br>
-        Je Gerät: Backup auf diesen Manager, Tunnel einrichten, Handshake abwarten. Kommt kein Tunnel zustande, wird die Änderung zurückgenommen. <b>Danach verwaltet nur noch die Cloud das Gerät</b>: Dieser Manager kommt nicht mehr darauf und zeigt es als „in der Cloud“. Die Geräte brauchen ausgehend UDP zum Cloud-Hub.</div>
+        Je Gerät: Backup auf diesen Manager, Tunnel einrichten, Handshake abwarten. Kommt kein Tunnel zustande, wird die Änderung zurückgenommen. <b>Danach schreibt nur noch die Cloud</b>: Dieser Manager liest weiter mit, zeigt Status und Netzwerk und sichert, ändert aber nichts mehr. „zurückholen“ in der Gerätezeile gibt das Schreiben wieder frei. Die Geräte brauchen ausgehend UDP zum Cloud-Hub.</div>
       <label for="clCode" style="margin-top:10px">Anmelde-Befehl aus der Cloud</label>
       <textarea id="clCode" rows="3" spellcheck="false" autocomplete="off" style="width:100%" title="Der Befehl oder die Adresse https://…/enroll/<Code>.rsc. Ein Einmal-Code reicht nur für ein Gerät."></textarea>
       <div class="btns" style="justify-content:flex-start;align-items:center">
@@ -371,8 +371,9 @@ function row(d) {
   if (d.latestVersion && v && !v.startsWith(d.latestVersion)) tags.push(`<span class="badge b-warn">→ ${esc(d.latestVersion)}</span>`);
   const fwUpd = d.currentFirmware && d.upgradeFirmware && d.currentFirmware !== d.upgradeFirmware;
   const fw = d.routerboard ? esc(d.currentFirmware) + (fwUpd ? `<span class="badge b-warn">→ ${esc(d.upgradeFirmware)}</span>` : '') : (d.apiStatus === 'ok' ? '<span class="mute">kein RouterBOARD</span>' : '');
-  const st = {ok: '<span class="badge b-ok">ok</span>', auth: '<span class="badge b-bad">Login</span>', unreachable: '<span class="badge b-bad">nicht erreichbar</span>', error: '<span class="badge b-bad">Fehler</span>', moved: '<span class="badge b-mute" title="Wird von der Cloud verwaltet. „Vergessen“ entfernt das Gerät aus dieser Liste.">in der Cloud</span>'}[d.apiStatus] || '<span class="badge b-mute">…</span>';
-  const credTag = d.hasOwnCred ? ' <span class="badge b-mute" title="eigene Zugangsdaten">eigene</span>' : '';
+  const st = {ok: '<span class="badge b-ok">ok</span>', auth: '<span class="badge b-bad">Login</span>', unreachable: '<span class="badge b-bad">nicht erreichbar</span>', error: '<span class="badge b-bad">Fehler</span>'}[d.apiStatus] || '<span class="badge b-mute">…</span>';
+  const credTag = (d.hasOwnCred ? ' <span class="badge b-mute" title="eigene Zugangsdaten">eigene</span>' : '')
+    + (d.cloudUrl ? ` <span class="badge b-mute" title="Die Cloud verwaltet dieses Gerät, hier nur lesen und Backups.">Cloud</span> <button class="small" data-cloudback="${esc(d.id)}" title="Nach Rückfrage: Dieser Manager darf wieder schreiben, z. B. wenn die Cloud ausfällt. Ändert nichts am Gerät.">zurückholen</button>` : '');
   return `<tr class="${major(v) === '6' ? 'v6' : ''}">
     <td><span class="dot ${online(d) ? 'on' : 'off'}" title="zuletzt gesehen: ${esc(ago(d.lastSeen))}"></span><a class="devlink" href="#dev/${encodeURIComponent(d.id)}" title="Öffnet die Detailseite des Geräts: Ports, Konfig-Historie, Dateien, Backups, Einstellungen und Standort.">${esc(d.identity || '—')}</a>${d.location ? `<div class="hint">${esc(d.location)}</div>` : ''}</td>
     <td><a href="http://${esc(d.ip)}/" target="_blank" rel="noopener">${esc(d.ip)}</a><div class="mono mute">${esc(d.mac)}</div></td>
@@ -386,7 +387,7 @@ function row(d) {
     <td>${jobCell(d)}</td>
     <td><button class="small" data-upd="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Nach Rückfrage: speichert ein Backup auf dem Manager, installiert eine neuere RouterOS-Version (falls vorhanden) und danach die RouterBOARD-Firmware. Das Gerät startet dabei ein- bis zweimal neu (je ca. 1–2 Minuten offline).">Update</button> <button class="small" data-reboot="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Nach Rückfrage: startet das Gerät neu (ca. 1–2 Minuten offline) und prüft, dass es wieder erreichbar ist.">Neustart</button>
       <button class="small" data-cred="${esc(d.id)}" title="Öffnet einen Dialog für eigene Zugangsdaten nur dieses Geräts. Ändert nichts auf dem Gerät.">Login</button> <button class="small" data-poll="${esc(d.id)}" title="Liest das Gerät sofort neu aus (Version, Firmware, Status). Ändert nichts auf dem Gerät.">↻</button>
-      <div style="margin-top:4px"><button class="small" data-set="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Öffnet die Einstellungen: Name setzen, alle Ports in die Bridge, DHCP-Client auf der Bridge (WLAN: eigener Knopf). Ändert erst nach Vorschau und ausdrücklichem Klick auf „Jetzt ausführen“.">Einstellungen</button> ${(d.wirelessPkg || axBoard(d)) ? `<button class="small" data-wlan="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Öffnet die WLAN-Übersicht dieses Geräts: SSID, Passwort und an/aus je Schnittstelle ändern; bei altem wireless-Paket zusätzlich die Umstellung auf das neue wifi-Paket. Ändert erst nach Vorschau und Klick auf „Jetzt ausführen“.">WLAN</button> ` : ''}<button class="small" data-backup="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Erstellt sofort ein Backup (Binär-Backup + Text-Export) und speichert es auf dem Manager. Die Kopie auf dem Gerät wird danach gelöscht. Kein Neustart, keine Änderung der Konfiguration.">Backup</button>
+      <div style="margin-top:4px"><button class="small" data-set="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Öffnet die Einstellungen: Name setzen, alle Ports in die Bridge, DHCP-Client auf der Bridge (WLAN: eigener Knopf). Ändert erst nach Vorschau und ausdrücklichem Klick auf „Jetzt ausführen“.">Einstellungen</button> ${(d.wirelessPkg || axBoard(d)) ? `<button class="small" data-wlan="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Öffnet die WLAN-Übersicht dieses Geräts: SSID, Passwort und an/aus je Schnittstelle ändern; bei altem wireless-Paket zusätzlich die Umstellung auf das neue wifi-Paket. Ändert erst nach Vorschau und Klick auf „Jetzt ausführen“.">WLAN</button> ` : ''}<button class="small" data-backup="${esc(d.id)}" ${d.job && d.job.running ? 'disabled' : ''} title="Erstellt sofort ein Backup (Binär-Backup + Text-Export) und speichert es auf dem Manager. Die Kopie auf dem Gerät wird danach gelöscht. Kein Neustart, keine Änderung der Konfiguration.">Backup</button>
       ${d.backups ? `<button class="small" data-blist="${esc(d.id)}" title="Zeigt die auf dem Manager gespeicherten Backups dieses Geräts zum Herunterladen.">${d.backups} Dateien · ${esc(ago(d.lastBackup))}</button>` : '<span class="hint">kein Backup</span>'}</div></td>
   </tr>`;
 }
@@ -745,6 +746,12 @@ document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => {
 });
 
 // --- Cloud-Umzug ---
+document.addEventListener('click', async e => {
+  const id = e.target.dataset && e.target.dataset.cloudback;
+  if (!id || !confirm('Dieser Manager darf das Gerät wieder ändern. Nur sinnvoll, wenn die Cloud es nicht mehr verwaltet, sonst überschreiben sich beide. Fortfahren?')) return;
+  const r = await api('POST', `/api/devices/${encodeURIComponent(id)}/cloud-release`, {});
+  flash(r.msg); load();
+});
 $('#clCheck').onclick = async () => {
   $('#clMsg').textContent = 'prüfe Code und Geräte …'; $('#clList').innerHTML = ''; $('#clRunBox').hidden = true;
   let r;
@@ -757,7 +764,7 @@ $('#clCheck').onclick = async () => {
 };
 $('#clRun').onclick = async () => {
   const ids = [...document.querySelectorAll('[data-cl]:checked')].map(x => x.dataset.cl);
-  if (!ids.length || !confirm(`${ids.length} Gerät(e) in die Cloud umziehen?\nDieser Manager verliert danach den Zugriff auf diese Geräte.`)) return;
+  if (!ids.length || !confirm(`${ids.length} Gerät(e) in die Cloud umziehen?\nDieser Manager liest danach nur noch mit.`)) return;
   try { const r = await api('POST', '/api/cloud-move/apply', {code: $('#clCode').value, ids}); showResults('Umzug in die Cloud', r.results); $('#clRunBox').hidden = true; load(); }
   catch (e) { $('#clMsg').textContent = '❌ ' + e.message; }
 };
@@ -951,7 +958,7 @@ function render() {
   const n6 = ds.filter(d => major(d.version) === '6').length;
   const n7 = ds.filter(d => major(d.version) === '7').length;
   const nUpd = ds.filter(d => d.currentFirmware && d.upgradeFirmware && d.currentFirmware !== d.upgradeFirmware).length;
-  const nErr = ds.filter(d => d.apiStatus && d.apiStatus !== 'ok' && d.apiStatus !== 'moved').length;
+  const nErr = ds.filter(d => d.apiStatus && d.apiStatus !== 'ok').length;
   $('#tiles').innerHTML = [
     [ds.length, 'Geräte'], [n7, 'RouterOS 7'], [n6, 'RouterOS 6 (Migration)'], [nUpd, 'Firmware-Update'], [nErr, 'API-Problem'],
     [ds.filter(d => !d.lastBackup || Date.now() - new Date(d.lastBackup) > 36 * 3600 * 1000).length, 'ohne Backup (36 h)']
@@ -1190,7 +1197,7 @@ function renderDetail() {
   const d = detailDev(); if (!d || $('#detail').hidden) return;
   // Beim Neuzeichnen (alle 15 s) eine laufende Eingabe im Standort-Feld nicht verlieren
   const typing = document.activeElement && document.activeElement.id === 'dLoc' ? $('#dLoc').value : null;
-  const st = {ok: '<span class="badge b-ok">ok</span>', auth: '<span class="badge b-bad">Login</span>', unreachable: '<span class="badge b-bad">nicht erreichbar</span>', error: '<span class="badge b-bad">Fehler</span>', moved: '<span class="badge b-mute" title="Wird von der Cloud verwaltet. „Vergessen“ entfernt das Gerät aus dieser Liste.">in der Cloud</span>'}[d.apiStatus] || '<span class="badge b-mute">…</span>';
+  const st = {ok: '<span class="badge b-ok">ok</span>', auth: '<span class="badge b-bad">Login</span>', unreachable: '<span class="badge b-bad">nicht erreichbar</span>', error: '<span class="badge b-bad">Fehler</span>'}[d.apiStatus] || '<span class="badge b-mute">…</span>';
   const kv = [['IP', `<a href="http://${esc(d.ip)}/" target="_blank" rel="noopener">${esc(d.ip)}</a>`], ['MAC', `<span class="mono">${esc(d.mac || '')}</span>`],
     ['Modell', esc(d.model || d.board || '')], ['Seriennummer', `<span class="mono">${esc(d.serial || '–')}</span>`],
     ['RouterOS', esc(d.version || '') + (d.latestVersion && d.version && !d.version.startsWith(d.latestVersion) ? ` <span class="badge b-warn">→ ${esc(d.latestVersion)}</span>` : '') + `<div class="hint">Kanal ${esc(d.channel || '–')}</div>`],
@@ -1217,7 +1224,7 @@ function renderDetail() {
     ${d.job ? `<div style="margin-top:10px">${jobCell(d)}</div>` : ''}`;
   if (typing !== null) { $('#dLoc').value = typing; $('#dLoc').focus(); }
   renderWlan();
-  $('#dBak').innerHTML = `<div class="btns" style="justify-content:flex-start"><button class="small" data-backup="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Erstellt sofort ein Backup (Binär + Text-Export) auf dem Manager. Kein Neustart.">Backup jetzt</button>
+  $('#dBak').innerHTML = `<div class="btns" style="justify-content:flex-start"><button class="small" data-backup="${esc(d.id)}" ${d.job && d.job.running ? 'disabled' : ''} title="Erstellt sofort ein Backup (Binär + Text-Export) auf dem Manager. Kein Neustart.">Backup jetzt</button>
       ${d.backups ? `<button class="small" data-blist="${esc(d.id)}" title="Liste aller Backups dieses Geräts: herunterladen oder zurückspielen.">${d.backups} Dateien · zuletzt vor ${esc(ago(d.lastBackup))} – herunterladen / zurückspielen</button>` : '<span class="hint">noch kein Backup</span>'}</div>
     <div class="hint" style="margin-top:6px">Jede Sicherung legt einen Text-Export (.rsc) ab – daraus entstehen die Konfig-Unterschiede in der Historie oben.</div>`;
 }
