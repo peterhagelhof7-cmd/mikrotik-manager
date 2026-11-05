@@ -575,3 +575,13 @@ Monats; nur erfassen, keine Schwelle; mm und Cloud; noch kein Testgerät.
 - **Die VLAN-Filterung geht zuletzt an,** damit die Bridge bis dahin erreichbar bleibt.
 - **Der WWAN-Bereich ist bei Routern gesperrt,** damit nie zwei Stellen dasselbe konfigurieren.
 
+## 2026-11-06 – Untagged VLAN je Port
+
+- **Gleiche Bedeutung wie im Router-Tab:** VLAN 1 = offen (alle anderen getaggt), anderes VLAN = nur dieses ungetaggt.
+- **Die Auswahl kommt vom Router des Standorts,** nicht aus dem, was Geräte zufällig kennen. Ein Wert, den der Router
+  nicht kennt, wird angezeigt, ist aber nicht wählbar.
+- **Vorhandene Zeilen der VLAN-Tabelle werden ergänzt, nie ersetzt:** Das zentrale WLAN trägt dort seine WLAN-Ports ein.
+- **Uplink gesperrt, unklarer Uplink ebenfalls,** wie bei Loop Protect. `uplinkPorts` liegt dafür jetzt in `uplink.go`.
+- **Offen:** Zentrales WLAN räumt beim Ausrollen eigene Zeilen auf und kennt `mm-portvlan` nicht. Die Wirkung auf Ports
+  mit Untagged VLAN ist noch nicht getestet.
+

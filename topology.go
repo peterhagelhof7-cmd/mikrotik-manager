@@ -481,7 +481,7 @@ func readTopo(ctx context.Context, cl *routeros.Client) topoRaw {
 	r.BridgePorts, _ = printAll(ctx, cl, "/interface/bridge/port/print", "=.proplist=interface,pvid,frame-types")
 	r.BridgeVLANs, _ = printAll(ctx, cl, "/interface/bridge/vlan/print", "=.proplist=vlan-ids,tagged,untagged,current-tagged,current-untagged")
 	r.Neighbors, _ = printAll(ctx, cl, "/ip/neighbor/print", "=.proplist=interface,mac-address,identity")
-	r.ARP, _ = printAll(ctx, cl, "/ip/arp/print", "=.proplist=address,mac-address")
+	r.ARP, _ = printAll(ctx, cl, "/ip/arp/print", "=.proplist=address,mac-address,interface")
 	r.Leases, _ = printAll(ctx, cl, "/ip/dhcp-server/lease/print", "=.proplist=address,mac-address,host-name")
 	return r
 }

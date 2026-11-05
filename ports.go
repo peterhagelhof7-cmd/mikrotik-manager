@@ -21,6 +21,7 @@ type PortInfo struct {
 	Rate     string `json:"rate,omitempty"`   // z. B. 1Gbps
 	Duplex   string `json:"duplex,omitempty"` // full | half
 	Bridge   string `json:"bridge,omitempty"`
+	PVID     int    `json:"pvid,omitempty"` // ungetaggtes VLAN am Bridge-Port
 	MAC      string `json:"mac,omitempty"`
 	// PoE-Ausgang ("" = Port kann kein PoE-out)
 	PoE      string `json:"poe,omitempty"`      // auto-on | forced-on | off
@@ -60,7 +61,7 @@ func readPorts(ctx context.Context, cl *routeros.Client) ([]PortInfo, error) {
 		}
 		poeMon, _ = printAll(ctx, cl, "/interface/ethernet/poe/monitor", "=numbers="+strings.Join(pn, ","), "=once=")
 	}
-	br, _ = printAll(ctx, cl, "/interface/bridge/port/print", "=.proplist=interface,bridge")
+	br, _ = printAll(ctx, cl, "/interface/bridge/port/print", "=.proplist=interface,bridge,pvid")
 	return buildPorts(eth, mon, poe, poeMon, br), nil
 }
 
@@ -75,13 +76,15 @@ func buildPorts(eth, mon, poe, poeMon, br []map[string]string) []PortInfo {
 	}
 	monBy, poeBy, poeMonBy := byName(mon), byName(poe), byName(poeMon)
 	bridge := map[string]string{}
+	pvid := map[string]int{}
 	for _, m := range br {
 		bridge[m["interface"]] = m["bridge"]
+		pvid[m["interface"]], _ = strconv.Atoi(m["pvid"])
 	}
 	var out []PortInfo
 	for _, m := range eth {
 		x := PortInfo{Name: m["name"], Comment: m["comment"], Disabled: m["disabled"] == "true",
-			Link: m["running"] == "true", Bridge: bridge[m["name"]], MAC: m["mac-address"]}
+			Link: m["running"] == "true", Bridge: bridge[m["name"]], PVID: pvid[m["name"]], MAC: m["mac-address"]}
 		x.SFP = strings.HasPrefix(m["default-name"], "sfp") || strings.HasPrefix(m["name"], "sfp")
 		if mm, ok := monBy[x.Name]; ok {
 			if s := mm["status"]; s != "" {

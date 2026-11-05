@@ -319,6 +319,17 @@ Schreiben wieder frei. Das ändert nichts am Gerät, der Tunnel bleibt stehen.
 
 Die Cloud muss den eigenen Benutzer schon kennen; eine ältere Cloud lehnt dieser Manager beim Prüfen ab.
 
+### Untagged VLAN je Port
+
+Auf der Geräteseite steht in der Port-Tabelle die Spalte **Untagged VLAN** mit den VLANs, die der Router des
+Standorts kennt (Tab Router). Die Auswahl zeigt erst eine Vorschau, Ausführen läuft mit Backup und Wächter.
+VLAN 1 heißt: VLAN 1 ungetaggt, alle anderen getaggt. Ein anderes VLAN heißt: nur dieses ungetaggt.
+
+Gesperrt sind der Uplink des Geräts und alle Ports des Routers, die der Tab Router einstellt. Ist der VLAN-Filter der
+Bridge aus, schaltet die Änderung ihn ein und trägt die VLANs des Standorts auf den übrigen offenen Ethernet-Ports
+getaggt ein. VLANs, die der Router nicht kennt, laufen danach nicht mehr durch. Switches der Serien CRS1xx und
+CRS2xx können das nicht im Switch-Chip: Der Verkehr läuft über die CPU und ist deutlich langsamer.
+
 ### Netzwerk-Baum: Scope
 
 Im Tab Netzwerk steht hinter der Wurzel die Auswahl **Scope**: **alles** zeigt den ganzen Baum, **VLAN** blendet

@@ -59,6 +59,8 @@ type ChangeReq struct {
 	IPGateway string `json:"ipGateway,omitempty"`
 	IPDNS     string `json:"ipDns,omitempty"` // eine oder mehrere, getrennt durch Komma oder Leerzeichen
 	SNMPOn    bool   `json:"snmpOn,omitempty"`
+	Port      string `json:"port,omitempty"`     // portvlan: Ethernet-Port
+	PortVLAN  int    `json:"portVlan,omitempty"` // portvlan: ungetaggtes VLAN
 }
 
 // q setzt einen Wert für RouterOS-Skripte in Anführungszeichen.
@@ -415,6 +417,8 @@ func (p *Poller) planFor(ctx context.Context, cl *routeros.Client, id string, re
 		return planCentral(ctx, cl, c, p.plan2G(c, id))
 	case "router":
 		return p.planRouter(ctx, cl, id)
+	case "portvlan":
+		return p.planPortVLAN(ctx, cl, id, req.Port, req.PortVLAN)
 	case "ipconf":
 		d, _ := p.st.Get(id)
 		return planIPConf(ctx, cl, d.IP, req)
@@ -444,7 +448,7 @@ func makePlan(ctx context.Context, cl *routeros.Client, req ChangeReq) (Plan, er
 func (p *Poller) StartChange(ids []string, req ChangeReq) []Result {
 	fn := func(ctx context.Context, id string, x *Job) error { return p.doChange(ctx, id, x, req) }
 	switch req.Action {
-	case "bridge", "dhcp", "wlan", "central", "wwan", "ipconf", "snmp", "router":
+	case "bridge", "dhcp", "wlan", "central", "wwan", "ipconf", "snmp", "router", "portvlan":
 	case "wifimigrate":
 		fn = p.doMigrate
 	default:

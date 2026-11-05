@@ -101,7 +101,7 @@ func (c *captureWriter) Write(b []byte) (int, error) {
 
 func changeLabel(a string) string {
 	if l, ok := map[string]string{"bridge": "alle Ports in die Bridge", "dhcp": "DHCP-Client auf der Bridge", "wlan": "WLAN ändern",
-		"central": "zentrale WLAN-Konfiguration", "wifimigrate": "Umstellung auf wifi-Paket", "wwan": "WWAN / LTE-Router", "router": "Router-Konfiguration", "ipconf": "IP-Einstellungen", "snmp": "SNMP", "cloudmove": "Umzug in die Cloud"}[a]; ok {
+		"central": "zentrale WLAN-Konfiguration", "wifimigrate": "Umstellung auf wifi-Paket", "wwan": "WWAN / LTE-Router", "router": "Router-Konfiguration", "portvlan": "Port-VLAN", "ipconf": "IP-Einstellungen", "snmp": "SNMP", "cloudmove": "Umzug in die Cloud"}[a]; ok {
 		return l
 	}
 	return a
@@ -111,13 +111,22 @@ func changeLabel(a string) string {
 func jobKindLabel(k string) string {
 	if l, ok := map[string]string{"update": "Update", "reboot": "Neustart", "backup": "Backup", "bridge": "Bridge",
 		"dhcp": "DHCP-Client", "wlan": "WLAN", "central": "zentrale WLAN-Konfiguration", "wifimigrate": "Umstellung wifi",
-		"restore": "Rollback", "wwan": "WWAN / LTE-Router", "router": "Router-Konfiguration", "ipconf": "IP-Einstellungen", "snmp": "SNMP", "cloudmove": "Umzug in die Cloud"}[k]; ok {
+		"restore": "Rollback", "wwan": "WWAN / LTE-Router", "router": "Router-Konfiguration", "portvlan": "Port-VLAN", "ipconf": "IP-Einstellungen", "snmp": "SNMP", "cloudmove": "Umzug in die Cloud"}[k]; ok {
 		return l
 	}
 	return k
 }
 
 // --- Detailseite ---
+
+func (w *web) devicePortVLANs(rw http.ResponseWriter, r *http.Request) {
+	l, isRouter, err := w.pl.SiteVLANs(r.PathValue("id"))
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(rw, map[string]any{"vlans": l, "router": isRouter})
+}
 
 func (w *web) deviceRouterWan(rw http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)

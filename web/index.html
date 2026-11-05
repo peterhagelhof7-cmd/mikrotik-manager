@@ -436,7 +436,7 @@ const axBoard = d => {
   if (n.some(x => /^E62|\bax S$/i.test(x))) return false;
   return n.some(x => /^A42G|^hAP be lite$/i.test(x) || /[25]H?P?axD/.test(x) || /(^|\s)ax($|\s|\^|²|³|[23]\b)/i.test(x));
 };
-const kindName = k => ({update: 'Update', reboot: 'Neustart', backup: 'Backup', bridge: 'Bridge', dhcp: 'DHCP-Client', wlan: 'WLAN', wifimigrate: 'Umstellung wifi', restore: 'Rollback', wwan: 'WWAN / LTE-Router', router: 'Router', ipconf: 'IP-Einstellungen', snmp: 'SNMP', cloudmove: 'Cloud-Umzug'})[k] || k;
+const kindName = k => ({update: 'Update', reboot: 'Neustart', backup: 'Backup', bridge: 'Bridge', dhcp: 'DHCP-Client', wlan: 'WLAN', wifimigrate: 'Umstellung wifi', restore: 'Rollback', wwan: 'WWAN / LTE-Router', router: 'Router', portvlan: 'Port-VLAN', ipconf: 'IP-Einstellungen', snmp: 'SNMP', cloudmove: 'Cloud-Umzug'})[k] || k;
 
 // Einstellungen: Name direkt; Bridge/DHCP erst Vorschau, dann Ausführen mit Rückroll-Wächter.
 function settingsDialog(d) {
@@ -774,6 +774,7 @@ function renderCentralResult(rows) {
     catch (e) { $('#cMsg').textContent = '❌ ' + e.message; run.disabled = false; }
   };
 }
+document.addEventListener('change', e => { if (e.target.dataset && e.target.dataset.pvlan) portVlanChange(e.target); });
 document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => {
   if (b.dataset.tab === 'tabNet') setTimeout(netOpen, 0);
   document.querySelectorAll('.tabs [data-tab]').forEach(x => { x.classList.toggle('active', x === b); $('#' + x.dataset.tab).hidden = x !== b; });
@@ -1298,7 +1299,8 @@ function openDetail(id) {
       <div class="card" id="dWanCard" hidden><h3 style="margin:0 0 8px">WAN</h3><div id="dWan"><div class="hint">lese WAN …</div></div></div>
       <div class="card"><div class="dhead"><h3 style="margin:0">Ports</h3><button class="small" data-dx="ports" title="Liest Link- und PoE-Status sofort neu vom Gerät. Ändert nichts.">↻ neu lesen</button><span class="hint" id="dPortsAt"></span></div>
         <div class="legend" style="margin-top:8px"><span class="port"><i></i>kein Link</span><span class="port link"><i></i>Link</span><span class="port poe"><i></i>PoE versorgt Gerät</span><span class="port poe-nolink"><i></i>PoE an, aber kein Link</span><span class="port dis"><i></i>deaktiviert</span></div>
-        <div id="dPorts"><div class="hint">lese Ports …</div></div></div>
+        <div id="dPorts"><div class="hint">lese Ports …</div></div>
+        <div id="dPortPlan" class="card" style="margin:10px 0 0" hidden></div></div>
       <div class="card" id="dWlanCard" hidden><div class="dhead"><h3 style="margin:0">WLAN</h3><button class="small" data-dx="wlan" title="Liest die WLAN-Schnittstellen sofort neu vom Gerät. Ändert nichts – ändern über den Knopf „WLAN“ oben.">↻ neu lesen</button><span class="hint" id="dWlanAt"></span></div>
         <div class="legend" style="margin-top:8px"><span class="port wl"><i></i>aus / sendet nicht</span><span class="port wl wl-on"><i></i>sendet, keine Clients</span><span class="port wl wl-cl"><i></i>sendet, mit Clients</span><span class="port wl dis"><i></i>deaktiviert</span></div>
         <div id="dWlan"><div class="hint">lese WLAN …</div></div></div>
@@ -1395,6 +1397,13 @@ async function loadWan(quiet) {
     </div>`).join('')}</div>` : '<div class="hint">Keine WAN-Ports eingerichtet.</div>';
   } catch (e) { if (!quiet) { $('#dWanCard').hidden = false; $('#dWan').innerHTML = `<div class="hint" style="color:#f0a0a0">WAN nicht lesbar: ${esc(e.message)}</div>`; } }
 }
+let portVlans = null;
+async function portVlanChange(sel) {
+  const d = detailDev(); if (!d) return;
+  const box = $('#dPortPlan'), port = sel.dataset.pvlan, v = parseInt(sel.value, 10);
+  box.hidden = false;
+  previewChange(box, {close() { box.hidden = true; loadPorts(true); }}, d, `${port}: VLAN ${v} ungetaggt`, {action: 'portvlan', port, portVlan: v});
+}
 async function loadPorts(quiet) {
   const id = detailId;
   try {
@@ -1402,14 +1411,20 @@ async function loadPorts(quiet) {
     if (!r.ok) throw new Error(await r.text());
     const ps = await r.json();
     if (id !== detailId) return;
+    if (quiet && (!$('#dPortPlan').hidden || (document.activeElement && document.activeElement.dataset.pvlan))) return;
+    if (!portVlans || portVlans.id !== id) { const v = await fetch(`/api/devices/${encodeURIComponent(id)}/port-vlans`, {cache: 'no-store'}); portVlans = v.ok ? Object.assign(await v.json(), {id}) : {id, vlans: [], router: false}; }
+    const dv = detailDev(), pvLock = !dv || portVlans.router || !wwAdmin(dv) || (dv.job && dv.job.running) || dv.cloudUrl;
+    const pvTitle = portVlans.router ? 'Die Ports des Routers werden im Tab Router eingestellt.' : dv && dv.cloudUrl ? 'Wird von der Cloud verwaltet, hier nur lesen und sichern.' : 'Ungetaggtes VLAN dieses Ports. Auswahl zeigt erst eine Vorschau. VLANs kommen aus dem Tab Router.';
+    const pvCell = p => { if (!p.bridge) return '<span class="mute" title="Port hängt an keiner Bridge.">–</span>'; const cur = p.pvid || 1, l = (portVlans.vlans || []).slice(); if (!l.some(x => x.id === cur)) l.push({id: cur, label: `VLAN ${cur} (am Router nicht eingerichtet)`}); return `<select data-pvlan="${esc(p.name)}" ${pvLock ? 'disabled' : ''} style="width:auto" title="${esc(pvTitle)}">${l.map(x => opt(x.id, cur, x.label)).join('')}</select>`; };
     $('#dPortsAt').textContent = 'Stand ' + new Date().toLocaleTimeString('de-DE') + ' · alle 15 s neu';
     if (!ps.length) { $('#dPorts').innerHTML = '<div class="hint">keine Ethernet-Ports</div>'; return; }
     const hasPoe = ps.some(p => p.poe);
     $('#dPorts').innerHTML = `<div class="portrow">${ps.map(p => `<div class="port ${portClass(p)}${p.sfp ? ' sfp' : ''}" title="${esc(p.name + (p.comment ? ' – ' + p.comment : '') + ': ' + portState(p))}"><i></i>${esc(p.name)}</div>`).join('')}</div>
-      <div class="wrap"><table><thead><tr><th>Port</th><th>Kommentar</th><th>Status</th><th>Bridge</th>${hasPoe ? '<th>PoE-Ausgang</th>' : ''}<th>MAC</th></tr></thead><tbody>${ps.map(p => `<tr>
+      <div class="wrap"><table><thead><tr><th>Port</th><th>Kommentar</th><th>Status</th><th>Bridge</th><th>Untagged VLAN</th>${hasPoe ? '<th>PoE-Ausgang</th>' : ''}<th>MAC</th></tr></thead><tbody>${ps.map(p => `<tr>
         <td><b>${esc(p.name)}</b>${p.sfp ? ' <span class="badge b-mute">SFP</span>' : ''}</td><td>${esc(p.comment || '')}</td>
         <td>${p.disabled ? '<span class="mute">deaktiviert</span>' : p.link ? `<span style="color:var(--ok)">● Link</span> ${esc(p.rate || '')}${p.duplex === 'half' ? ' <span class="badge b-warn">Halbduplex</span>' : ''}` : '<span class="mute">○ kein Link</span>'}</td>
         <td>${esc(p.bridge || '–')}</td>
+        <td>${pvCell(p)}</td>
         ${hasPoe ? `<td>${!p.poe ? '<span class="mute">–</span>' : p.poeUsed ? `<span style="color:#f0a0a0">● versorgt${p.poeWatt ? ' · ' + esc(p.poeWatt) + ' W' : ''}</span>${p.link ? '' : ' <span class="badge b-bad">kein Link</span>'}` : `<span class="mute">${esc(p.poe)}${p.poeState ? ' · ' + esc(p.poeState) : ''}</span>`}</td>` : ''}
         <td class="mono mute">${esc(p.mac || '')}</td></tr>`).join('')}</tbody></table></div>`;
   } catch (e) { if (!quiet || !$('#dPorts .portrow')) $('#dPorts').innerHTML = `<div class="hint" style="color:#f0a0a0">Ports nicht lesbar: ${esc(e.message)}</div>`; }
@@ -1599,7 +1614,7 @@ $('#detail').addEventListener('click', async e => {
   if (x === 'wlan') { $('#dWlan').innerHTML = '<div class="hint">lese WLAN …</div>'; detailCache.wlan = null; loadWlan(); }
   if (x === 'wlcl') { const n = b.dataset.if; wlOpen.has(n) ? wlOpen.delete(n) : wlOpen.add(n); renderWlan(); }
   if (x === 'back') { location.hash = ''; }
-  if (x === 'ports') { $('#dPorts').innerHTML = '<div class="hint">lese Ports …</div>'; loadPorts(); loadWan(); }
+  if (x === 'ports') { $('#dPortPlan').hidden = true; portVlans = null; $('#dPorts').innerHTML = '<div class="hint">lese Ports …</div>'; loadPorts(); loadWan(); }
   if (x === 'hist') { $('#dHist').innerHTML = '<div class="hint">lese Verlauf …</div>'; loadHist(); }
   if (x === 'files') { $('#dFiles').innerHTML = '<div class="hint">lese Dateien …</div>'; loadFiles(); }
   if (x === 'loc') {
