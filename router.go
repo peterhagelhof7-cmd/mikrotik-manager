@@ -38,6 +38,7 @@ const (
 	routerLanList  = "mm-lan"
 	routerNetList  = "mm-net"
 	routerTunnel   = "wg-mm"
+	routerVersion  = "2" // erhöhen, wenn sich das Skript ändert: Der Plan weicht dann ab
 )
 
 var routerChecks = []string{"8.8.4.4", "1.0.0.1"} // bewusst keine DNS-Server der Clients
@@ -455,7 +456,7 @@ func routerWanScript(b *strings.Builder, x RouterPort, secret string, dist int) 
 		fmt.Fprintf(b, "/ip address add address=%s interface=%s comment=%s\n", q(x.Address+"/"+x.Mask), base, cm)
 		fmt.Fprintf(b, "/ip route add dst-address=0.0.0.0/0 gateway=%s distance=%d comment=%s\n", q(x.Gateway), dist, cm)
 	case "dhcp":
-		fmt.Fprintf(b, "/ip dhcp-client add interface=%s add-default-route=yes default-route-distance=%d use-peer-dns=yes use-peer-ntp=no comment=%s disabled=no\n", base, dist, cm)
+		fmt.Fprintf(b, "/ip dhcp-client add interface=%s add-default-route=yes default-route-distance=%d use-peer-dns=yes use-peer-ntp=no comment=%s script=%s disabled=no\n", base, dist, cm, rsrc(routerLeaseScript(x.Role)))
 	case "pppoe":
 		fmt.Fprintf(b, "/interface pppoe-client add name=%s interface=%s user=%s password=%s add-default-route=yes default-route-distance=%d use-peer-dns=yes comment=%s disabled=no\n",
 			q(routerL3(x)), base, q(x.User), q(secret), dist, cm)
@@ -484,6 +485,7 @@ func routerHash(c RouterCfg, secrets map[string]string) string {
 	}
 	sort.Strings(keys)
 	h := sha256.New()
+	h.Write([]byte(routerVersion))
 	h.Write(b)
 	for _, k := range keys {
 		h.Write([]byte("\x00" + k + "\x00" + secrets[k]))
@@ -845,4 +847,117 @@ func routerHasVLAN(c RouterCfg, v int) bool {
 		}
 	}
 	return false
+}
+
+// routerLeaseVar ist die globale Variable, in der das Skript am DHCP-Client den Zeitpunkt
+// des Leases festhält: RouterOS nennt nur die Restlaufzeit, und das Log läuft schnell über.
+func routerLeaseVar(role string) string {
+	if role == "backup" {
+		return "mmLeaseBackup"
+	}
+	return "mmLeaseWan"
+}
+
+func routerLeaseScript(role string) string {
+	return `:if ($bound=1) do={ :global ` + routerLeaseVar(role) + ` ([/system clock get date] . " " . [/system clock get time]) }`
+}
+
+// RouterWanInfo ist der Stand einer WAN-Verbindung für die Geräteseite.
+type RouterWanInfo struct {
+	Port      string   `json:"port"`
+	Role      string   `json:"role"`
+	Type      string   `json:"type"`
+	VLAN      string   `json:"vlan,omitempty"`
+	Addresses []string `json:"addresses,omitempty"`
+	Gateway   string   `json:"gateway,omitempty"`
+	DNS       string   `json:"dns,omitempty"`
+	Since     string   `json:"since,omitempty"`   // Lease bzw. IP bezogen am
+	Expires   string   `json:"expires,omitempty"` // Lease läuft ab in
+	Status    string   `json:"status,omitempty"`  // Stand des DHCP-Clients
+	Link      bool     `json:"link"`
+	LinkUp    string   `json:"linkUp,omitempty"` // Link up seit
+	Active    bool     `json:"active"`           // trägt gerade den Verkehr
+}
+
+// buildRouterWan setzt die Antworten zusammen (getrennt, damit testbar).
+func buildRouterWan(c RouterCfg, addrs, dcs, ifs, env []map[string]string, backupOn bool) []RouterWanInfo {
+	byName := map[string]map[string]string{}
+	for _, x := range ifs {
+		byName[x["name"]] = x
+	}
+	vars := map[string]string{}
+	for _, x := range env {
+		vars[x["name"]] = x["value"]
+	}
+	out := []RouterWanInfo{}
+	for _, x := range c.Ports {
+		if x.Role != "wan" && x.Role != "backup" {
+			continue
+		}
+		l3 := routerL3(x)
+		w := RouterWanInfo{Port: x.Name, Role: x.Role, Type: x.Type, VLAN: x.VLAN, Active: (x.Role == "backup") == backupOn}
+		w.Link = byName[x.Name]["running"] == "true"
+		if w.Link {
+			w.LinkUp = byName[x.Name]["last-link-up-time"]
+		}
+		for _, a := range addrs {
+			if a["interface"] == l3 && a["disabled"] != "true" {
+				w.Addresses = append(w.Addresses, a["address"])
+				if x.Type == "pppoe" || x.Type == "wwan" {
+					w.Gateway = a["network"]
+				}
+			}
+		}
+		switch x.Type {
+		case "ipoe":
+			w.Gateway, w.DNS = x.Gateway, x.DNS
+		case "dhcp":
+			for _, d := range dcs {
+				if d["interface"] == l3 {
+					w.Gateway, w.DNS, w.Expires, w.Status = d["gateway"], d["primary-dns"], d["expires-after"], d["status"]
+				}
+			}
+			if w.Status == "bound" {
+				w.Since = vars[routerLeaseVar(x.Role)]
+			}
+		case "pppoe", "wwan":
+			if i := byName[l3]; i["running"] == "true" {
+				w.Since = i["last-link-up-time"]
+			}
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
+// RouterWan liest den Stand der WAN-Verbindungen eines Routers.
+func (p *Poller) RouterWan(ctx context.Context, id string) ([]RouterWanInfo, error) {
+	d, ok := p.st.Get(id)
+	if !ok {
+		return nil, fmt.Errorf("Gerät unbekannt")
+	}
+	c := p.Router(routerKeyOf(d))
+	if c.Device != id {
+		return []RouterWanInfo{}, nil
+	}
+	var out []RouterWanInfo
+	err := p.withClient(ctx, d, func(ctx context.Context, cl *routeros.Client) error {
+		addrs, err := printAll(ctx, cl, "/ip/address/print", "=.proplist=address,interface,network,disabled")
+		if err != nil {
+			return err
+		}
+		dcs, err := printAll(ctx, cl, "/ip/dhcp-client/print", "=.proplist=interface,status,gateway,primary-dns,expires-after")
+		if err != nil {
+			return err
+		}
+		ifs, err := printAll(ctx, cl, "/interface/print", "=.proplist=name,running,last-link-up-time")
+		if err != nil {
+			return err
+		}
+		env, _ := printAll(ctx, cl, "/system/script/environment/print", "=.proplist=name,value")
+		bk, _ := printAll(ctx, cl, "/ip/route/print", "?comment="+routerComment+"-backup", "=.proplist=dst-address")
+		out = buildRouterWan(c, addrs, dcs, ifs, env, len(bk) > 0)
+		return nil
+	})
+	return out, err
 }

@@ -208,6 +208,58 @@ func TestTopologyNeighborsThroughBridges(t *testing.T) {
 	}
 }
 
+func TestTopologyVLANs(t *testing.T) {
+	if got := strings.Join(topoVLANIDs("10, 20-22,x"), ","); got != "10,20,21,22" {
+		t.Fatal(got)
+	}
+	r := topoRaw{
+		BridgePorts: []map[string]string{
+			{"interface": "ether1", "pvid": "1"},
+			{"interface": "ether2", "pvid": "10", "frame-types": "admit-only-untagged-and-priority-tagged"},
+			{"interface": "ether3", "pvid": "1", "frame-types": "admit-only-vlan-tagged"},
+		},
+		BridgeVLANs: []map[string]string{
+			{"vlan-ids": "10", "current-tagged": "bridge,ether1,ether3", "current-untagged": "ether2"},
+			{"vlan-ids": "20-21", "tagged": "ether3"},
+		},
+	}
+	got := topoPortVLANs(&r)
+	for p, want := range map[string]string{"ether1": "1,10", "ether2": "10", "ether3": "10,20,21"} {
+		if j := strings.Join(got[p], ","); j != want {
+			t.Errorf("%s: %s, erwartet %s", p, j, want)
+		}
+	}
+	raws := chainSite()
+	for i := range raws {
+		if raws[i].ID == "C" {
+			raws[i].BridgeVLANs = []map[string]string{{"vlan-ids": "30", "tagged": "ether8"}}
+		}
+		if raws[i].ID == "K" {
+			raws[i].Hosts = append(raws[i].Hosts, map[string]string{"mac-address": "AA:AA:AA:00:00:01", "on-interface": "ether4", "vid": "40"})
+		}
+	}
+	top := BuildTopology(raws, "R")
+	if j := strings.Join(top.VLANs, ","); j != "30,40" {
+		t.Fatal(j)
+	}
+	var port *TopoPort
+	var walk func(n *TopoNode)
+	walk = func(n *TopoNode) {
+		for _, p := range n.Ports {
+			if n.ID == "C" && p.Name == "ether8" {
+				port = p
+			}
+			for _, c := range p.Children {
+				walk(c)
+			}
+		}
+	}
+	walk(top.Root)
+	if port == nil || strings.Join(port.VLANs, ",") != "30" {
+		t.Fatalf("%+v", port)
+	}
+}
+
 func TestManagedTreeOddData(t *testing.T) {
 	ok := []*topoRaw{{ID: "R"}, {ID: "X"}, {ID: "Y"}, {ID: "Z"}, {ID: "L"}}
 	// X und Y sehen einander „unten“ (Schleife), Z sieht die Wurzel nicht.

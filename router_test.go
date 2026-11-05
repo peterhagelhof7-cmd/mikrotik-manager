@@ -196,3 +196,48 @@ func TestSaveRouterKeepsSecret(t *testing.T) {
 		t.Fatal("Standard-LAN fehlt")
 	}
 }
+
+func TestBuildRouterWan(t *testing.T) {
+	c := RouterCfg{Device: "R", Ports: []RouterPort{
+		{Name: "ether1", Role: "wan", Type: "dhcp"},
+		{Name: "ether2", Role: "backup", Type: "pppoe", VLAN: "7"},
+		{Name: "ether3", Role: "access"},
+	}}
+	addrs := []map[string]string{{"address": "192.168.178.50/24", "interface": "ether1"}, {"address": "100.64.1.2/32", "interface": "mm-pppoe-ether2", "network": "100.64.0.1"},
+		{"address": "10.0.0.1/24", "interface": "bridge"}}
+	dcs := []map[string]string{{"interface": "ether1", "status": "bound", "gateway": "192.168.178.254", "primary-dns": "192.168.178.254", "expires-after": "4h42m"}}
+	ifs := []map[string]string{{"name": "ether1", "running": "true", "last-link-up-time": "2026-11-05 23:37:50"}, {"name": "ether2", "running": "false", "last-link-up-time": "2026-11-01 10:00:00"},
+		{"name": "mm-pppoe-ether2", "running": "true", "last-link-up-time": "2026-11-05 23:38:10"}}
+	env := []map[string]string{{"name": "mmLeaseWan", "value": "2026-11-05 23:38:00"}}
+	got := buildRouterWan(c, addrs, dcs, ifs, env, false)
+	if len(got) != 2 {
+		t.Fatalf("%+v", got)
+	}
+	w, b := got[0], got[1]
+	if w.Since != "2026-11-05 23:38:00" || w.Expires != "4h42m" || w.Gateway != "192.168.178.254" || w.LinkUp != "2026-11-05 23:37:50" || !w.Active || w.Addresses[0] != "192.168.178.50/24" {
+		t.Fatalf("%+v", w)
+	}
+	if b.Since != "2026-11-05 23:38:10" || b.Gateway != "100.64.0.1" || b.Link || b.LinkUp != "" || b.Active {
+		t.Fatalf("%+v", b)
+	}
+	if got := buildRouterWan(c, addrs, dcs, ifs, env, true); got[0].Active || !got[1].Active {
+		t.Fatalf("%+v", got)
+	}
+	// Ohne gebundenen Lease gibt es kein „bezogen am“.
+	dcs[0]["status"] = "searching..."
+	if got := buildRouterWan(c, addrs, dcs, ifs, env, false); got[0].Since != "" {
+		t.Fatalf("%+v", got[0])
+	}
+	if s := routerScript(routerSampleValid(t), map[string]string{"ether2": "x"}, "bridge"); !strings.Contains(s, `:global mmLeaseWan`) {
+		t.Fatal(s)
+	}
+}
+
+func routerSampleValid(t *testing.T) RouterCfg {
+	t.Helper()
+	c := routerSample()
+	if err := validRouter(&c); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}

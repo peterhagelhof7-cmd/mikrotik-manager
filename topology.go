@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,8 @@ type topoRaw struct {
 	Err                 string
 	OwnMACs             []string
 	Hosts               []map[string]string // mac-address, on-interface, vid, local
+	BridgePorts         []map[string]string // interface, pvid, frame-types
+	BridgeVLANs         []map[string]string // vlan-ids, tagged, untagged, current-tagged, current-untagged
 	Neighbors           []map[string]string // interface, mac-address, identity
 	Ports               []map[string]string // name, type, running, mac-address
 	ARP                 []map[string]string // address, mac-address
@@ -52,6 +55,7 @@ type TopoPort struct {
 	Name     string      `json:"name"`
 	Type     string      `json:"type,omitempty"` // ether, wifi, …
 	Link     bool        `json:"link"`
+	VLANs    []string    `json:"vlans,omitempty"` // liegen am Port an, auch ohne MAC
 	MACs     []TopoMAC   `json:"macs"`
 	Children []*TopoNode `json:"children,omitempty"`
 }
@@ -72,6 +76,7 @@ type Topology struct {
 	RootAuto   bool        `json:"rootAuto"` // Wurzel automatisch gewählt
 	Unattached []*TopoNode `json:"unattached,omitempty"`
 	Unreached  []TopoNode  `json:"unreached,omitempty"` // nicht lesbar
+	VLANs      []string    `json:"vlans,omitempty"`     // alle VLANs des Standorts
 	At         time.Time   `json:"at"`
 }
 
@@ -270,12 +275,14 @@ func BuildTopology(raws []topoRaw, root string) Topology {
 			p := get(port)
 			p.MACs = append(p.MACs, TopoMAC{MAC: m, IP: ipOf[m], Host: hostOf[m], VLAN: h["vid"], Wireless: p.Type == "wifi" || p.Type == "wlan"})
 		}
+		portVLANs := topoPortVLANs(r)
 		sort.Strings(order)
 		for _, name := range order {
 			if name == uplink[id] {
 				continue
 			}
 			p := ports[name]
+			p.VLANs = portVLANs[name]
 			sort.Slice(p.MACs, func(a, b int) bool { return p.MACs[a].MAC < p.MACs[b].MAC })
 			n.Ports = append(n.Ports, p)
 		}
@@ -318,7 +325,115 @@ func BuildTopology(raws []topoRaw, root string) Topology {
 		}
 	}
 	sort.Slice(t.Unattached, func(a, b int) bool { return t.Unattached[a].Identity < t.Unattached[b].Identity })
+	t.VLANs = collectVLANs(&t)
 	return t
+}
+
+// topoVLANIDs zerlegt "10,20-22" in einzelne VLANs.
+func topoVLANIDs(s string) []string {
+	var out []string
+	for _, x := range strings.Split(s, ",") {
+		a, b, rng := strings.Cut(strings.TrimSpace(x), "-")
+		lo, err := strconv.Atoi(a)
+		if err != nil {
+			continue
+		}
+		hi := lo
+		if rng {
+			if hi, err = strconv.Atoi(b); err != nil {
+				continue
+			}
+		}
+		for v := lo; v <= hi && v <= 4094; v++ {
+			out = append(out, strconv.Itoa(v))
+		}
+	}
+	return out
+}
+
+// topoPortVLANs sagt, welche VLANs an welchem Port anliegen: das Port-VLAN (außer der Port
+// nimmt nur Getaggtes an) und alle Einträge der Bridge-VLAN-Tabelle, auch ohne aktive MAC.
+func topoPortVLANs(r *topoRaw) map[string][]string {
+	set := map[string]map[string]bool{}
+	add := func(port, v string) {
+		if port == "" || v == "" {
+			return
+		}
+		if set[port] == nil {
+			set[port] = map[string]bool{}
+		}
+		set[port][v] = true
+	}
+	for _, b := range r.BridgePorts {
+		if b["frame-types"] != "admit-only-vlan-tagged" {
+			pv := b["pvid"]
+			if pv == "" {
+				pv = "1"
+			}
+			add(b["interface"], pv)
+		}
+	}
+	for _, e := range r.BridgeVLANs {
+		for _, v := range topoVLANIDs(e["vlan-ids"]) {
+			for _, k := range []string{"current-tagged", "current-untagged", "tagged", "untagged"} {
+				for _, p := range strings.Split(e[k], ",") {
+					add(strings.TrimSpace(p), v)
+				}
+			}
+		}
+	}
+	out := map[string][]string{}
+	for p, m := range set {
+		for v := range m {
+			out[p] = append(out[p], v)
+		}
+		sortVLANs(out[p])
+	}
+	return out
+}
+
+func sortVLANs(l []string) {
+	sort.Slice(l, func(a, b int) bool {
+		x, _ := strconv.Atoi(l[a])
+		y, _ := strconv.Atoi(l[b])
+		return x < y
+	})
+}
+
+// collectVLANs sammelt alle VLANs des Baums; eine MAC ohne VLAN liegt im Standard-VLAN 1.
+func collectVLANs(t *Topology) []string {
+	seen := map[string]bool{}
+	var walk func(n *TopoNode)
+	walk = func(n *TopoNode) {
+		if n == nil {
+			return
+		}
+		for _, p := range n.Ports {
+			for _, v := range p.VLANs {
+				seen[v] = true
+			}
+			for _, m := range p.MACs {
+				if m.VLAN == "" {
+					seen["1"] = true
+				} else {
+					seen[m.VLAN] = true
+				}
+			}
+			for _, c := range p.Children {
+				walk(c)
+			}
+		}
+	}
+	walk(t.Root)
+	for _, n := range t.Unattached {
+		walk(n)
+	}
+	out := make([]string, 0, len(seen))
+	for v := range seen {
+		out = append(out, v)
+	}
+	sortVLANs(out)
+	return out
 }
 
 // readTopo liest die Daten eines Geräts (nur print).
@@ -363,6 +478,8 @@ func readTopo(ctx context.Context, cl *routeros.Client) topoRaw {
 		}
 	}
 	r.Hosts, _ = printAll(ctx, cl, "/interface/bridge/host/print", "=.proplist=mac-address,on-interface,vid,local")
+	r.BridgePorts, _ = printAll(ctx, cl, "/interface/bridge/port/print", "=.proplist=interface,pvid,frame-types")
+	r.BridgeVLANs, _ = printAll(ctx, cl, "/interface/bridge/vlan/print", "=.proplist=vlan-ids,tagged,untagged,current-tagged,current-untagged")
 	r.Neighbors, _ = printAll(ctx, cl, "/ip/neighbor/print", "=.proplist=interface,mac-address,identity")
 	r.ARP, _ = printAll(ctx, cl, "/ip/arp/print", "=.proplist=address,mac-address")
 	r.Leases, _ = printAll(ctx, cl, "/ip/dhcp-server/lease/print", "=.proplist=address,mac-address,host-name")

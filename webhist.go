@@ -119,6 +119,17 @@ func jobKindLabel(k string) string {
 
 // --- Detailseite ---
 
+func (w *web) deviceRouterWan(rw http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	l, err := w.pl.RouterWan(ctx, r.PathValue("id"))
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(rw, l)
+}
+
 func (w *web) devicePorts(rw http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()

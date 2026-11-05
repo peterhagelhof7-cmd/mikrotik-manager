@@ -133,6 +133,7 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 	}))))
 	// Detailseite eines Geräts (nur lesend, außer dem Standort-Text)
 	mux.Handle("GET /api/devices/{id}/ports", w.auth(http.HandlerFunc(w.devicePorts)))
+	mux.Handle("GET /api/devices/{id}/router-wan", w.auth(http.HandlerFunc(w.deviceRouterWan)))
 	mux.Handle("GET /api/devices/{id}/files", w.auth(http.HandlerFunc(w.deviceFiles)))
 	mux.Handle("GET /api/devices/{id}/history", w.auth(http.HandlerFunc(w.deviceHistory)))
 	mux.Handle("GET /api/devices/{id}/wlan/status", w.auth(http.HandlerFunc(w.deviceWlanStatus)))

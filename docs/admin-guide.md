@@ -319,6 +319,14 @@ Schreiben wieder frei. Das ändert nichts am Gerät, der Tunnel bleibt stehen.
 
 Die Cloud muss den eigenen Benutzer schon kennen; eine ältere Cloud lehnt dieser Manager beim Prüfen ab.
 
+### Netzwerk-Baum: Scope
+
+Im Tab Netzwerk steht hinter der Wurzel die Auswahl **Scope**: **alles** zeigt den ganzen Baum, **VLAN** blendet
+ein zweites Feld mit allen VLANs des Standorts ein. Dann bleiben nur Geräte, Ports und MAC-Adressen, die dieses
+VLAN nutzen, dazu der Weg dorthin. Ein Port zählt auch ohne aktive MAC, wenn das VLAN laut Bridge dort anliegt.
+Eine MAC ohne VLAN-Angabe zählt zu VLAN 1. Ein Bridge ohne VLAN-Filter meldet nur VLAN 1, obwohl getaggter Verkehr
+durchlaufen kann. CSV gibt nur die gefilterte Liste aus.
+
 ### Router
 
 Tab **Router** (lokal für das ganze Netz, in der Cloud je Standort): Hier wählst du das Gerät, das Router
@@ -331,6 +339,11 @@ ist. Es bekommt die Badge **router**. Je Port stellst du Rolle, Typ und VLAN ein
 - **VLAN am Access-Port:** leer = VLAN 1 ungetaggt, alle anderen getaggt. Ein Wert = nur dieses ungetaggt.
   Mehrere = nur diese getaggt, VLAN 1 darin ungetaggt.
 - **VLAN am WAN:** Die Verbindung läuft darüber, das VLAN ist sonst überall gesperrt.
+
+Auf der Geräteseite des Routers zeigt die Karte **WAN** je Verbindung IP-Adresse, Gateway, DNS, **Link up seit**,
+bei DHCP **Lease bezogen am** und die Restlaufzeit, bei PPPoE und WWAN **IP bezogen am**. RouterOS nennt bei DHCP
+nur die Restlaufzeit; den Zeitpunkt hält ein Skript am DHCP-Client fest. Das klappt also erst ab dem nächsten neuen
+Lease nach dem Ausrollen. Die Badge **aktiv** zeigt, über welche Verbindung der Verkehr gerade läuft.
 
 Unter **Netzwerke** ist die erste Zeile das Standard-LAN (VLAN 1), weitere kommen mit **+** dazu. Netzwerke
 sind untereinander gesperrt und dürfen ins Internet; nur das Standard-LAN darf in die anderen. Von außen ist

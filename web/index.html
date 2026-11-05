@@ -170,6 +170,9 @@ pre.diff .add{color:#7fdca4}pre.diff .del{color:#f0a0a0}pre.diff .gap{color:var(
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">
         <label for="nRoot" style="margin:0">Wurzel</label>
         <select id="nRoot" style="width:auto" title="Gerät oben im Baum – der Router oder der zentrale Switch. „automatisch“ nimmt das Gerät mit den meisten Nachbarn; „Fremdgerät“, wenn Router/Switch nicht von MikroTik sind – dann stehen alle verwalteten Geräte eine Stufe darunter. Die Wahl wird gespeichert."></select>
+        <label for="nScope" style="margin:0">Scope</label>
+        <select id="nScope" style="width:auto" title="alles = der ganze Baum. VLAN = nur Geräte, Ports und MAC-Adressen, die das gewählte VLAN an diesem Standort nutzen. Ändert nichts."><option value="">alles</option><option value="vlan">VLAN</option></select>
+        <select id="nVlan" style="width:auto" hidden title="VLANs, die an diesem Standort vorkommen: an Ports, in der VLAN-Tabelle der Bridges oder bei MAC-Adressen."></select>
         <button class="primary" id="nLoad" title="Liest MAC-Tabellen, Nachbarn, ARP und DHCP von allen Geräten neu. Ändert nichts.">Aktualisieren</button>
         <input id="nQ" placeholder="Suchen: MAC, IP, Hostname, Port, Gerät" style="flex:1;min-width:220px" title="Filtert den Baum; der Weg zur Fundstelle bleibt sichtbar.">
         <button id="nCsv" title="Lädt die angezeigte Liste als CSV (Gerät, Port, MAC, IP, Hostname, VLAN).">CSV</button>
@@ -1292,6 +1295,7 @@ function openDetail(id) {
   if (first) {
     detailCache = {}; wlOpen.clear();
     $('#detail').innerHTML = `<div class="card" id="dHead"></div>
+      <div class="card" id="dWanCard" hidden><h3 style="margin:0 0 8px">WAN</h3><div id="dWan"><div class="hint">lese WAN …</div></div></div>
       <div class="card"><div class="dhead"><h3 style="margin:0">Ports</h3><button class="small" data-dx="ports" title="Liest Link- und PoE-Status sofort neu vom Gerät. Ändert nichts.">↻ neu lesen</button><span class="hint" id="dPortsAt"></span></div>
         <div class="legend" style="margin-top:8px"><span class="port"><i></i>kein Link</span><span class="port link"><i></i>Link</span><span class="port poe"><i></i>PoE versorgt Gerät</span><span class="port poe-nolink"><i></i>PoE an, aber kein Link</span><span class="port dis"><i></i>deaktiviert</span></div>
         <div id="dPorts"><div class="hint">lese Ports …</div></div></div>
@@ -1303,14 +1307,14 @@ function openDetail(id) {
       <div class="card"><h3>Backups auf dem Manager</h3><div id="dBak"></div></div>
       <div class="card"><div class="dhead"><h3 style="margin:0">Dateien auf dem Gerät</h3><button class="small" data-dx="files" title="Liest die Dateiliste neu vom Gerät. Ändert nichts.">↻ neu lesen</button></div><div id="dFiles"><div class="hint">lese Dateien …</div></div></div>`;
     window.scrollTo(0, 0);
-    loadPorts(); loadHist(); loadFiles(); loadWlan(); loadWwan();
+    loadPorts(); loadWan(); loadHist(); loadFiles(); loadWlan(); loadWwan();
   }
   renderDetail();
   clearInterval(detailTimer);
   let ticks = 0;
   detailTimer = setInterval(() => {
     if ($('#detail').hidden || document.visibilityState !== 'visible') return;
-    loadPorts(true);
+    loadPorts(true); loadWan(true);
     if (++ticks % 4 === 0) loadWlan(true); // WLAN jede Minute (die Clients liest der Manager ohnehin minütlich)
   }, 15000);
 }
@@ -1366,6 +1370,30 @@ function portState(p) {
   if (p.disabled) return 'deaktiviert';
   const l = p.link ? 'Link ' + (p.rate || '') + (p.duplex === 'half' ? ' (Halbduplex)' : '') : 'kein Link';
   return p.poeUsed ? l + ` · PoE ${p.poeWatt ? p.poeWatt + ' W' : 'an'}` : l;
+}
+const rosTime = s => { const m = /^(\d{4})-(\d\d)-(\d\d) (.*)$/.exec(s || ''); return m ? `${m[3]}.${m[2]}.${m[1]} ${m[4]}` : (s || ''); };
+async function loadWan(quiet) {
+  const d = detailDev(); if (!d || !d.router) { const c = $('#dWanCard'); if (c) c.hidden = true; return; }
+  const id = detailId;
+  try {
+    const r = await fetch(`/api/devices/${encodeURIComponent(id)}/router-wan`, {cache: 'no-store'});
+    if (!r.ok) throw new Error(await r.text());
+    const l = await r.json();
+    if (id !== detailId) return;
+    $('#dWanCard').hidden = false;
+    const role = {wan: 'WAN', backup: 'Backup WAN'}, typ = {ipoe: 'IPoE', dhcp: 'DHCPoE', pppoe: 'PPPoE', wwan: 'WWAN'};
+    const line = (k, v) => v ? `<div><span class="mute">${k}:</span> ${v}</div>` : '';
+    $('#dWan').innerHTML = l.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">${l.map(w => `<div>
+      <b>${esc(w.port)}</b> <span class="mute">${role[w.role] || ''} · ${typ[w.type] || ''}${w.vlan ? ' · VLAN ' + esc(w.vlan) : ''}</span>${w.active ? ' <span class="badge b-ok" title="Über diese Verbindung läuft gerade der Verkehr.">aktiv</span>' : ''}
+      ${line('IP-Adresse', (w.addresses || []).map(a => `<span class="mono">${esc(a)}</span>`).join(', ') || '<span class="mute">keine</span>')}
+      ${line('Gateway', w.gateway ? `<span class="mono">${esc(w.gateway)}</span>` : '')}
+      ${line('DNS', w.dns ? `<span class="mono">${esc(w.dns)}</span>` : '')}
+      ${w.type === 'dhcp' ? line('Lease bezogen am', w.since ? esc(rosTime(w.since)) : w.status === 'bound' ? '<span class="mute" title="Das Gerät nennt nur die Restlaufzeit. Den Zeitpunkt hält es erst nach dem nächsten Ausrollen selbst fest.">unbekannt</span>' : '<span class="mute">' + esc(w.status || 'kein Lease') + '</span>') : ''}
+      ${w.type === 'pppoe' || w.type === 'wwan' ? line('IP bezogen am', w.since ? esc(rosTime(w.since)) : '<span class="mute">nicht verbunden</span>') : ''}
+      ${line('Lease läuft ab in', w.expires ? esc(w.expires) : '')}
+      ${line('Link up seit', w.link ? (w.linkUp ? esc(rosTime(w.linkUp)) : '<span class="mute">unbekannt</span>') : '<span style="color:#f0a0a0">kein Link</span>')}
+    </div>`).join('')}</div>` : '<div class="hint">Keine WAN-Ports eingerichtet.</div>';
+  } catch (e) { if (!quiet) { $('#dWanCard').hidden = false; $('#dWan').innerHTML = `<div class="hint" style="color:#f0a0a0">WAN nicht lesbar: ${esc(e.message)}</div>`; } }
 }
 async function loadPorts(quiet) {
   const id = detailId;
@@ -1571,7 +1599,7 @@ $('#detail').addEventListener('click', async e => {
   if (x === 'wlan') { $('#dWlan').innerHTML = '<div class="hint">lese WLAN …</div>'; detailCache.wlan = null; loadWlan(); }
   if (x === 'wlcl') { const n = b.dataset.if; wlOpen.has(n) ? wlOpen.delete(n) : wlOpen.add(n); renderWlan(); }
   if (x === 'back') { location.hash = ''; }
-  if (x === 'ports') { $('#dPorts').innerHTML = '<div class="hint">lese Ports …</div>'; loadPorts(); }
+  if (x === 'ports') { $('#dPorts').innerHTML = '<div class="hint">lese Ports …</div>'; loadPorts(); loadWan(); }
   if (x === 'hist') { $('#dHist').innerHTML = '<div class="hint">lese Verlauf …</div>'; loadHist(); }
   if (x === 'files') { $('#dFiles').innerHTML = '<div class="hint">lese Dateien …</div>'; loadFiles(); }
   if (x === 'loc') {
@@ -1620,24 +1648,35 @@ function netRootValue() {
   return t.root.id === '' ? '@fremd' : t.root.id;
 }
 function netMatch(q, ...vals) { return !q || vals.some(v => v && String(v).toLowerCase().includes(q)); }
+// Gewähltes VLAN, '' = alles. Eine MAC ohne VLAN liegt im Standard-VLAN 1.
+const netVlan = () => $('#nScope').value === 'vlan' ? $('#nVlan').value : '';
+const netMacIn = (m, v) => !v || (m.vlan || '1') === v;
 function netNode(n, q, path) {
+  const v = netVlan();
   const hit = netMatch(q, n.identity, n.model);
   let ports = '';
   for (const p of n.ports || []) {
-    const macs = (p.macs || []).filter(m => hit || netMatch(q, m.mac, m.ip, m.host, p.name, m.vlan));
+    const macs = (p.macs || []).filter(m => netMacIn(m, v) && (hit || netMatch(q, m.mac, m.ip, m.host, p.name, m.vlan)));
     const kids = (p.children || []).map(c => netNode(c, q, path.concat(n.identity, p.name))).filter(Boolean).join('');
+    if (v && !macs.length && !kids && !(p.vlans || []).includes(v)) continue;
     if (q && !hit && !macs.length && !kids && !netMatch(q, p.name)) continue;
     if (!macs.length && !kids && !(p.macs || []).length && !(p.children || []).length && q) continue;
     const rows = macs.map(m => `<tr class="nmac"><td class="mono">${esc(m.mac)}</td><td class="mono">${esc(m.ip || '')}</td><td>${esc(m.host || '')}</td><td class="mute">${m.vlan && m.vlan !== '1' ? 'VLAN ' + esc(m.vlan) : ''}</td><td>${m.wireless ? '<span class="badge b-mute">WLAN</span>' : ''}</td></tr>`).join('');
-    const total = (p.macs || []).length;
+    const total = (p.macs || []).filter(m => netMacIn(m, v)).length;
     ports += `<div class="nport"><span class="dot ${p.link ? 'on' : 'off'}" title="${p.link ? 'Link bzw. WLAN sendet' : 'kein Link bzw. WLAN sendet nicht'}"></span><b>${esc(p.name || 'direkt angeschlossen')}</b> <span class="mute">${total ? total + ' MAC' + (total > 1 ? 's' : '') : (p.children || []).length ? '' : '–'}</span>
       ${rows ? `<div class="wrap" style="margin:2px 0 0 18px"><table>${rows}</table></div>` : ''}${kids ? `<div class="ntree">${kids}</div>` : ''}</div>`;
   }
-  if (q && !hit && !ports) return '';
+  if ((q && !hit || v) && !ports) return '';
   return `<details open><summary><b>${esc(n.identity)}</b> <span class="mute">${esc(n.model || '')}${n.uplink ? ' · Uplink ' + esc(n.uplink) : ''}</span> ${n.id ? `<a href="#dev/${encodeURIComponent(n.id)}" class="hint" title="Detailseite des Geräts">Details ›</a>` : '<span class="hint">nicht verwaltet – Ports unbekannt, darunter alle Geräte ohne verwaltetes Gerät darüber</span>'}</summary>${n.uplink ? `<div class="hint" title="Der Uplink führt zum Gerät darüber. Dort steht alles, was hier über diesen Port läuft.">Uplink ${esc(n.uplink)}: MACs dort stehen beim Gerät darüber</div>` : ''}<div class="ntree">${ports || '<div class="hint">keine Ports mit Einträgen</div>'}</div></details>`;
+}
+function netVlanFill() {
+  const list = (netData && netData.vlans) || [], cur = $('#nVlan').value;
+  $('#nVlan').hidden = $('#nScope').value !== 'vlan';
+  $('#nVlan').innerHTML = list.length ? list.map(x => opt(x, cur, 'VLAN ' + x)).join('') : '<option value="">keine VLANs gefunden</option>';
 }
 function renderNet() {
   const t = netData; if (!t) return;
+  netVlanFill();
   const q = $('#nQ').value.trim().toLowerCase();
   let h = '';
   if (!t.root) h = '<div class="hint">Kein Gerät lesbar.</div>';
@@ -1653,7 +1692,7 @@ function netCSV() {
   const rows = [['Gerät', 'Port', 'MAC', 'IP', 'Hostname', 'VLAN', 'WLAN', 'Pfad']];
   const walk = (n, path) => {
     for (const p of n.ports || []) {
-      for (const m of p.macs || []) rows.push([n.identity, p.name, m.mac, m.ip || '', m.host || '', m.vlan || '', m.wireless ? 'ja' : '', path.concat(n.identity, p.name).join(' > ')]);
+      for (const m of (p.macs || []).filter(m => netMacIn(m, netVlan()))) rows.push([n.identity, p.name, m.mac, m.ip || '', m.host || '', m.vlan || '', m.wireless ? 'ja' : '', path.concat(n.identity, p.name).join(' > ')]);
       for (const c of p.children || []) walk(c, path.concat(n.identity, p.name));
     }
   };
@@ -1666,6 +1705,8 @@ function netCSV() {
 }
 $('#nLoad').onclick = () => loadNet();
 $('#nQ').oninput = renderNet;
+$('#nScope').onchange = renderNet;
+$('#nVlan').onchange = renderNet;
 $('#nCsv').onclick = netCSV;
 $('#nRoot').onchange = async () => {
   const root = $('#nRoot').value;
