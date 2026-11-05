@@ -577,11 +577,9 @@ Monats; nur erfassen, keine Schwelle; mm und Cloud; noch kein Testgerät.
 
 ## 2026-11-06 – Untagged VLAN je Port
 
-- **Gleiche Bedeutung wie im Router-Tab:** VLAN 1 = offen (alle anderen getaggt), anderes VLAN = nur dieses ungetaggt.
-- **Die Auswahl kommt vom Router des Standorts,** nicht aus dem, was Geräte zufällig kennen. Ein Wert, den der Router
-  nicht kennt, wird angezeigt, ist aber nicht wählbar.
-- **Vorhandene Zeilen der VLAN-Tabelle werden ergänzt, nie ersetzt:** Das zentrale WLAN trägt dort seine WLAN-Ports ein.
-- **Uplink gesperrt, unklarer Uplink ebenfalls,** wie bei Loop Protect. `uplinkPorts` liegt dafür jetzt in `uplink.go`.
-- **Offen:** Zentrales WLAN räumt beim Ausrollen eigene Zeilen auf und kennt `mm-portvlan` nicht. Die Wirkung auf Ports
-  mit Untagged VLAN ist noch nicht getestet.
+- **Port wandert in eine eigene Bridge, kein VLAN-Filter:** Praktisch alle Ports hängen in einer Bridge ohne Filter, dort
+  wirkt ein Port-VLAN nicht. Ein Filter wäre ein Umbau des ganzen Switches, lässt unbekannte VLANs nicht mehr durch und läuft
+  auf CRS1xx/CRS2xx über die CPU. `vlan<N>` plus `bridge-vlan<N>` ist das Muster der WLAN-Umstellung.
+- **Die Auswahl kommt vom Router des Standorts,** nicht aus dem, was Geräte zufällig kennen.
+- **Uplink gesperrt, unklarer Uplink ebenfalls,** wie bei Loop Protect. `uplinkPorts` liegt dafür in `uplink.go`.
 

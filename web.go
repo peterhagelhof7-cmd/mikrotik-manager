@@ -145,6 +145,7 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 	mux.Handle("GET /api/topology", w.auth(http.HandlerFunc(w.topology)))
 	mux.Handle("POST /api/topology/root", w.auth(http.HandlerFunc(w.setTopoRoot)))
 	mux.Handle("GET /api/router", w.auth(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { w.routerGet(rw, r, "") })))
+	mux.Handle("POST /api/devices/{id}/poe-cycle", w.auth(w.rec("PoE-Cycle gestartet", http.HandlerFunc(w.poeCycle))))
 	mux.Handle("POST /api/router", w.auth(w.rec("Router-Konfiguration gespeichert", http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { w.routerSave(rw, r, "") }))))
 	mux.Handle("POST /api/cloud-move/preview", w.auth(http.HandlerFunc(w.cloudPreview)))
 	mux.Handle("POST /api/cloud-move/apply", w.auth(w.rec("Umzug in die Cloud gestartet", http.HandlerFunc(w.cloudApply))))

@@ -134,7 +134,7 @@ func (p *Poller) pollOne(ctx context.Context, id string) {
 		x.CurrentFW, x.UpgradeFW = info.CurrentFW, info.UpgradeFW
 		x.CPULoad, x.FreeMem, x.TotalMem, x.FreeHDD, x.TotalHDD = info.CPULoad, info.FreeMem, info.TotalMem, info.FreeHDD, info.TotalHDD
 		x.Packages, x.WirelessPkg, x.Channel, x.Latest = info.Packages, info.WirelessPkg, info.Channel, info.Latest
-		x.LTE = info.LTE
+		x.LTE, x.PoE = info.LTE, info.PoE
 		x.APIStatus, x.APIError, x.CredSource, x.LastPoll = "ok", "", src, time.Now()
 	})
 	if len(info.LTE) > 0 {
@@ -221,6 +221,9 @@ func (p *Poller) readDevice(ctx context.Context, ip string, c Cred) (Device, err
 			}
 			d.Packages = append(d.Packages, name+" "+s.Map["version"])
 		}
+	}
+	if r, err := printAll(rctx, cl, "/interface/ethernet/poe/print", "=.proplist=name"); err == nil {
+		d.PoE = len(r) > 0
 	}
 	// LTE (WWAN): Schnittstellen und Byte-Zähler für die Volumenerfassung
 	if r, err := cl.RunContext(rctx, "/interface/print", "?type=lte", "=.proplist=name,rx-byte,tx-byte"); err == nil && len(r.Re) > 0 {

@@ -421,7 +421,7 @@ function row(d) {
     <td>${jobCell(d)}</td>
     <td><button class="small" data-upd="${esc(d.id)}" ${lock(d)} title="Nach Rückfrage: speichert ein Backup auf dem Manager, installiert eine neuere RouterOS-Version (falls vorhanden) und danach die RouterBOARD-Firmware. Das Gerät startet dabei ein- bis zweimal neu (je ca. 1–2 Minuten offline).">Update</button> <button class="small" data-reboot="${esc(d.id)}" ${lock(d)} title="Nach Rückfrage: startet das Gerät neu (ca. 1–2 Minuten offline) und prüft, dass es wieder erreichbar ist.">Neustart</button>
       <button class="small" data-cred="${esc(d.id)}" title="Öffnet einen Dialog für eigene Zugangsdaten nur dieses Geräts. Ändert nichts auf dem Gerät.">Login</button> <button class="small" data-poll="${esc(d.id)}" title="Liest das Gerät sofort neu aus (Version, Firmware, Status). Ändert nichts auf dem Gerät.">↻</button>
-      <div style="margin-top:4px"><button class="small" data-set="${esc(d.id)}" ${lock(d)} title="Öffnet die Einstellungen: Name setzen, alle Ports in die Bridge, DHCP-Client auf der Bridge (WLAN: eigener Knopf). Ändert erst nach Vorschau und ausdrücklichem Klick auf „Jetzt ausführen“.">Einstellungen</button> ${(d.wirelessPkg || axBoard(d)) ? `<button class="small" data-wlan="${esc(d.id)}" ${lock(d)} title="Öffnet die WLAN-Übersicht dieses Geräts: SSID, Passwort und an/aus je Schnittstelle ändern; bei altem wireless-Paket zusätzlich die Umstellung auf das neue wifi-Paket. Ändert erst nach Vorschau und Klick auf „Jetzt ausführen“.">WLAN</button> ` : ''}<button class="small" data-backup="${esc(d.id)}" ${d.job && d.job.running ? 'disabled' : ''} title="Erstellt sofort ein Backup (Binär-Backup + Text-Export) und speichert es auf dem Manager. Die Kopie auf dem Gerät wird danach gelöscht. Kein Neustart, keine Änderung der Konfiguration.">Backup</button>
+      <div style="margin-top:4px"><button class="small" data-set="${esc(d.id)}" ${lock(d)} title="Öffnet die Einstellungen: Name setzen, alle Ports in die Bridge, DHCP-Client auf der Bridge (WLAN: eigener Knopf). Ändert erst nach Vorschau und ausdrücklichem Klick auf „Jetzt ausführen“.">Einstellungen</button> ${d.poe && wwAdmin(d) ? `<button class="small" data-poeall="${esc(d.id)}" ${lock(d)} title="Nach Rückfrage: PoE an allen versorgenden Ports nacheinander aus, 10 Sekunden warten, wieder an. Die angeschlossenen Geräte starten neu. Der Uplink bleibt ausgenommen.">PoE-Cycle</button>` : ''} ${(d.wirelessPkg || axBoard(d)) ? `<button class="small" data-wlan="${esc(d.id)}" ${lock(d)} title="Öffnet die WLAN-Übersicht dieses Geräts: SSID, Passwort und an/aus je Schnittstelle ändern; bei altem wireless-Paket zusätzlich die Umstellung auf das neue wifi-Paket. Ändert erst nach Vorschau und Klick auf „Jetzt ausführen“.">WLAN</button> ` : ''}<button class="small" data-backup="${esc(d.id)}" ${d.job && d.job.running ? 'disabled' : ''} title="Erstellt sofort ein Backup (Binär-Backup + Text-Export) und speichert es auf dem Manager. Die Kopie auf dem Gerät wird danach gelöscht. Kein Neustart, keine Änderung der Konfiguration.">Backup</button>
       ${d.backups ? `<button class="small" data-blist="${esc(d.id)}" title="Zeigt die auf dem Manager gespeicherten Backups dieses Geräts zum Herunterladen.">${d.backups} Dateien · ${esc(ago(d.lastBackup))}</button>` : '<span class="hint">kein Backup</span>'}</div></td>
   </tr>`;
 }
@@ -436,7 +436,7 @@ const axBoard = d => {
   if (n.some(x => /^E62|\bax S$/i.test(x))) return false;
   return n.some(x => /^A42G|^hAP be lite$/i.test(x) || /[25]H?P?axD/.test(x) || /(^|\s)ax($|\s|\^|²|³|[23]\b)/i.test(x));
 };
-const kindName = k => ({update: 'Update', reboot: 'Neustart', backup: 'Backup', bridge: 'Bridge', dhcp: 'DHCP-Client', wlan: 'WLAN', wifimigrate: 'Umstellung wifi', restore: 'Rollback', wwan: 'WWAN / LTE-Router', router: 'Router', portvlan: 'Port-VLAN', ipconf: 'IP-Einstellungen', snmp: 'SNMP', cloudmove: 'Cloud-Umzug'})[k] || k;
+const kindName = k => ({update: 'Update', reboot: 'Neustart', backup: 'Backup', bridge: 'Bridge', dhcp: 'DHCP-Client', wlan: 'WLAN', wifimigrate: 'Umstellung wifi', restore: 'Rollback', wwan: 'WWAN / LTE-Router', router: 'Router', portvlan: 'Port-VLAN', poecycle: 'PoE-Cycle', ipconf: 'IP-Einstellungen', snmp: 'SNMP', cloudmove: 'Cloud-Umzug'})[k] || k;
 
 // Einstellungen: Name direkt; Bridge/DHCP erst Vorschau, dann Ausführen mit Rückroll-Wächter.
 function settingsDialog(d) {
@@ -1351,7 +1351,7 @@ function renderDetail() {
       ${(d.wirelessPkg || axBoard(d)) ? `<button class="small" data-wlan="${esc(d.id)}" ${lock(d)} title="WLAN dieses Geräts ansehen und ändern (mit Vorschau).">WLAN</button>` : ''}
       <button class="small" data-cred="${esc(d.id)}" title="Eigene Zugangsdaten nur für dieses Gerät. Ändert nichts auf dem Gerät.">Login</button>
       <button class="small" data-upd="${esc(d.id)}" ${lock(d)} title="Nach Rückfrage: Backup, dann RouterOS und Firmware aktualisieren (1–2 Neustarts).">Update</button>
-      <button class="small" data-reboot="${esc(d.id)}" ${lock(d)} title="Nach Rückfrage: Gerät neu starten.">Neustart</button>
+      <button class="small" data-reboot="${esc(d.id)}" ${lock(d)} title="Nach Rückfrage: Gerät neu starten.">Neustart</button> ${d.poe && wwAdmin(d) ? `<button class="small" data-poeall="${esc(d.id)}" ${lock(d)} title="Nach Rückfrage: PoE an allen versorgenden Ports nacheinander aus, 10 Sekunden warten, wieder an. Die angeschlossenen Geräte starten neu. Der Uplink bleibt ausgenommen.">PoE-Cycle</button>` : ''}
       <button class="small" data-poll="${esc(d.id)}" title="Liest das Gerät sofort neu aus. Ändert nichts.">↻ neu auslesen</button>
       ${d.hostKeyChanged ? `<button class="small" data-hostkey="${esc(d.id)}" title="Nach Rückfrage: übernimmt genau diesen neuen SSH-Schlüssel (${esc(d.hostKeyChanged)}).">SSH-Schlüssel übernehmen</button>` : ''}
     </div>
@@ -1397,12 +1397,19 @@ async function loadWan(quiet) {
     </div>`).join('')}</div>` : '<div class="hint">Keine WAN-Ports eingerichtet.</div>';
   } catch (e) { if (!quiet) { $('#dWanCard').hidden = false; $('#dWan').innerHTML = `<div class="hint" style="color:#f0a0a0">WAN nicht lesbar: ${esc(e.message)}</div>`; } }
 }
+document.addEventListener('click', async e => {
+  const b = e.target.closest && e.target.closest('button[data-poeall],button[data-poeport]'); if (!b) return;
+  const id = b.dataset.poeall || detailId, port = b.dataset.poeport || '', d = (data.devices || []).find(x => x.id === id); if (!d) return;
+  if (!confirm(port ? `${d.identity}: PoE an ${port} aus, 10 Sekunden warten, wieder an?\nDas Gerät an diesem Port startet neu.` : `${d.identity}: PoE an allen versorgenden Ports nacheinander aus und wieder an?\nJeder Port ist 10 Sekunden aus, die angeschlossenen Geräte starten neu.`)) return;
+  try { const r = await api('POST', `/api/devices/${encodeURIComponent(id)}/poe-cycle`, {port}); flash(r.ok ? 'PoE-Cycle läuft, Status oben' : '❌ ' + r.msg); load(); }
+  catch (err) { flash('❌ ' + err.message); }
+});
 let portVlans = null;
 async function portVlanChange(sel) {
   const d = detailDev(); if (!d) return;
   const box = $('#dPortPlan'), port = sel.dataset.pvlan, v = parseInt(sel.value, 10);
   box.hidden = false;
-  previewChange(box, {close() { box.hidden = true; loadPorts(true); }}, d, `${port}: VLAN ${v} ungetaggt`, {action: 'portvlan', port, portVlan: v});
+  previewChange(box, {close() { box.hidden = true; loadPorts(true); }}, d, v ? `${port}: VLAN ${v} ungetaggt` : `${port}: zurück in die Bridge`, {action: 'portvlan', port, portVlan: v});
 }
 async function loadPorts(quiet) {
   const id = detailId;
@@ -1414,18 +1421,19 @@ async function loadPorts(quiet) {
     if (quiet && (!$('#dPortPlan').hidden || (document.activeElement && document.activeElement.dataset.pvlan))) return;
     if (!portVlans || portVlans.id !== id) { const v = await fetch(`/api/devices/${encodeURIComponent(id)}/port-vlans`, {cache: 'no-store'}); portVlans = v.ok ? Object.assign(await v.json(), {id}) : {id, vlans: [], router: false}; }
     const dv = detailDev(), pvLock = !dv || portVlans.router || !wwAdmin(dv) || (dv.job && dv.job.running) || dv.cloudUrl;
-    const pvTitle = portVlans.router ? 'Die Ports des Routers werden im Tab Router eingestellt.' : dv && dv.cloudUrl ? 'Wird von der Cloud verwaltet, hier nur lesen und sichern.' : 'Ungetaggtes VLAN dieses Ports. Auswahl zeigt erst eine Vorschau. VLANs kommen aus dem Tab Router.';
-    const pvCell = p => { if (!p.bridge) return '<span class="mute" title="Port hängt an keiner Bridge.">–</span>'; const cur = p.pvid || 1, l = (portVlans.vlans || []).slice(); if (!l.some(x => x.id === cur)) l.push({id: cur, label: `VLAN ${cur} (am Router nicht eingerichtet)`}); return `<select data-pvlan="${esc(p.name)}" ${pvLock ? 'disabled' : ''} style="width:auto" title="${esc(pvTitle)}">${l.map(x => opt(x.id, cur, x.label)).join('')}</select>`; };
+    const pvTitle = portVlans.router ? 'Die Ports des Routers werden im Tab Router eingestellt.' : dv && dv.cloudUrl ? 'Wird von der Cloud verwaltet, hier nur lesen und sichern.' : 'Bridge = Port bleibt in der Hauptbridge. VLAN = Port wandert in eine eigene Bridge, das VLAN liegt dort ungetaggt an. Auswahl zeigt erst eine Vorschau. VLANs kommen aus dem Tab Router.';
+    const pvCell = p => { if (!p.bridge) return '<span class="mute" title="Port hängt an keiner Bridge.">–</span>'; const m = /^bridge-vlan(\d+)$/.exec(p.bridge), cur = m ? parseInt(m[1], 10) : 0, l = [{id: 0, label: 'Bridge'}].concat(portVlans.vlans || []); if (!l.some(x => x.id === cur)) l.push({id: cur, label: `VLAN ${cur} (am Router nicht eingerichtet)`}); return `<select data-pvlan="${esc(p.name)}" ${pvLock ? 'disabled' : ''} style="width:auto" title="${esc(pvTitle)}">${l.map(x => opt(x.id, cur, x.label)).join('')}</select>`; };
     $('#dPortsAt').textContent = 'Stand ' + new Date().toLocaleTimeString('de-DE') + ' · alle 15 s neu';
     if (!ps.length) { $('#dPorts').innerHTML = '<div class="hint">keine Ethernet-Ports</div>'; return; }
     const hasPoe = ps.some(p => p.poe);
     $('#dPorts').innerHTML = `<div class="portrow">${ps.map(p => `<div class="port ${portClass(p)}${p.sfp ? ' sfp' : ''}" title="${esc(p.name + (p.comment ? ' – ' + p.comment : '') + ': ' + portState(p))}"><i></i>${esc(p.name)}</div>`).join('')}</div>
-      <div class="wrap"><table><thead><tr><th>Port</th><th>Kommentar</th><th>Status</th><th>Bridge</th><th>Untagged VLAN</th>${hasPoe ? '<th>PoE-Ausgang</th>' : ''}<th>MAC</th></tr></thead><tbody>${ps.map(p => `<tr>
+      <div class="wrap"><table><thead><tr><th>Port</th><th>Kommentar</th><th>Status</th><th>Bridge</th><th>Untagged VLAN</th>${hasPoe ? '<th>PoE-Ausgang</th><th>PoE-Cycle</th>' : ''}<th>MAC</th></tr></thead><tbody>${ps.map(p => `<tr>
         <td><b>${esc(p.name)}</b>${p.sfp ? ' <span class="badge b-mute">SFP</span>' : ''}</td><td>${esc(p.comment || '')}</td>
         <td>${p.disabled ? '<span class="mute">deaktiviert</span>' : p.link ? `<span style="color:var(--ok)">● Link</span> ${esc(p.rate || '')}${p.duplex === 'half' ? ' <span class="badge b-warn">Halbduplex</span>' : ''}` : '<span class="mute">○ kein Link</span>'}</td>
         <td>${esc(p.bridge || '–')}</td>
         <td>${pvCell(p)}</td>
         ${hasPoe ? `<td>${!p.poe ? '<span class="mute">–</span>' : p.poeUsed ? `<span style="color:#f0a0a0">● versorgt${p.poeWatt ? ' · ' + esc(p.poeWatt) + ' W' : ''}</span>${p.link ? '' : ' <span class="badge b-bad">kein Link</span>'}` : `<span class="mute">${esc(p.poe)}${p.poeState ? ' · ' + esc(p.poeState) : ''}</span>`}</td>` : ''}
+        ${hasPoe ? `<td>${p.poe && p.poe !== 'off' && dv && wwAdmin(dv) ? `<button class="small" data-poeport="${esc(p.name)}" ${dv ? lock(dv) : ''} title="Nach Rückfrage: PoE an diesem Port aus, 10 Sekunden warten, wieder an. Das Gerät dahinter startet neu.">Cycle</button>` : ''}</td>` : ''}
         <td class="mono mute">${esc(p.mac || '')}</td></tr>`).join('')}</tbody></table></div>`;
   } catch (e) { if (!quiet || !$('#dPorts .portrow')) $('#dPorts').innerHTML = `<div class="hint" style="color:#f0a0a0">Ports nicht lesbar: ${esc(e.message)}</div>`; }
 }

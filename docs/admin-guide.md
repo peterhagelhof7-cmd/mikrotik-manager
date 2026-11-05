@@ -319,16 +319,25 @@ Schreiben wieder frei. Das ändert nichts am Gerät, der Tunnel bleibt stehen.
 
 Die Cloud muss den eigenen Benutzer schon kennen; eine ältere Cloud lehnt dieser Manager beim Prüfen ab.
 
+### PoE-Cycle
+
+Geräte mit PoE-Ausgängen haben in der Geräteliste und im Kopf der Geräteseite den Knopf **PoE-Cycle**: Alle Ports, die
+gerade ein Gerät versorgen, gehen nacheinander aus und nach 10 Sekunden wieder an. In der Port-Tabelle macht **Cycle**
+das für einen einzelnen Port. Die Geräte dahinter starten dadurch neu. Das braucht es, weil ein Neustart des
+Switches den PoE-Ausgang nicht unterbricht. Der Uplink bleibt ausgenommen. Das Aus- und Einschalten läuft als
+Skript auf dem Gerät, ein Port geht also auch dann wieder an, wenn die Verbindung zum Manager abreißt.
+
 ### Untagged VLAN je Port
 
-Auf der Geräteseite steht in der Port-Tabelle die Spalte **Untagged VLAN** mit den VLANs, die der Router des
+Auf der Geräteseite steht in der Port-Tabelle die Spalte **Untagged VLAN**: **Bridge** oder ein VLAN, das der Router des
 Standorts kennt (Tab Router). Die Auswahl zeigt erst eine Vorschau, Ausführen läuft mit Backup und Wächter.
-VLAN 1 heißt: VLAN 1 ungetaggt, alle anderen getaggt. Ein anderes VLAN heißt: nur dieses ungetaggt.
 
-Gesperrt sind der Uplink des Geräts und alle Ports des Routers, die der Tab Router einstellt. Ist der VLAN-Filter der
-Bridge aus, schaltet die Änderung ihn ein und trägt die VLANs des Standorts auf den übrigen offenen Ethernet-Ports
-getaggt ein. VLANs, die der Router nicht kennt, laufen danach nicht mehr durch. Switches der Serien CRS1xx und
-CRS2xx können das nicht im Switch-Chip: Der Verkehr läuft über die CPU und ist deutlich langsamer.
+Bei einem VLAN wandert der Port aus der Hauptbridge in eine eigene Bridge `bridge-vlan<N>`. Die hängt über die
+VLAN-Schnittstelle `vlan<N>` an der Hauptbridge. Am Port liegt das VLAN ungetaggt an, zum Uplink läuft es getaggt, der
+Uplink muss es also tragen. Ein VLAN-Filter ist dafür nicht nötig. Der Verkehr dieser Ports läuft über die CPU, nicht
+über den Switch-Chip. Mit **Bridge** wandert der Port zurück, eine leere VLAN-Bridge wird aufgeräumt.
+
+Gesperrt sind der Uplink des Geräts und alle Ports des Routers, die der Tab Router einstellt.
 
 ### Netzwerk-Baum: Scope
 

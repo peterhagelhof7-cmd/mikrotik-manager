@@ -46,6 +46,7 @@ type Device struct {
 	TotalHDD    int64     `json:"totalHdd,omitempty"`
 	Packages    []string  `json:"packages,omitempty"`
 	WirelessPkg string    `json:"wirelessPkg,omitempty"` // wireless | wifi | wifiwave2 | ""
+	PoE         bool      `json:"poe,omitempty"`         // Gerät hat PoE-Ausgänge
 	Channel     string    `json:"channel,omitempty"`     // Update-Kanal
 	Latest      string    `json:"latestVersion,omitempty"`
 	APIStatus   string    `json:"apiStatus,omitempty"` // ok | auth | unreachable | error
