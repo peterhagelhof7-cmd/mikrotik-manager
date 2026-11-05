@@ -544,6 +544,15 @@ func (p *Poller) doChange(ctx context.Context, id string, x *Job, req ChangeReq)
 		p.st.Update(id, func(x *Device) { x.IP = ip })
 	}
 
+	// Ist der Merker weg, hat der Wächter schon zurückgerollt. Ein zweiter Rückweg würde
+	// Routen doppelt anlegen oder das Backup erneut laden.
+	rctx, cancel = context.WithTimeout(ctx, 15*time.Second)
+	left, lerr := printAll(rctx, cl, "/system/script/print", "?name=mm-undo-"+tag, "=.proplist=name")
+	cancel()
+	if lerr == nil && len(left) == 0 {
+		return fmt.Errorf("nicht bestätigt: Das Gerät war zu lange nicht erreichbar und hat den alten Zustand selbst wiederhergestellt")
+	}
+
 	// Prüfen: Ein erneuter Plan muss „nichts zu tun“ ergeben.
 	rctx, cancel = context.WithTimeout(ctx, 30*time.Second)
 	if action == "wlan" {
