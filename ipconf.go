@@ -398,6 +398,13 @@ func buildIPDhcpPlan(st ipState) Plan {
 		undo.WriteString(try(strings.ReplaceAll(strings.TrimSpace(ipFallbackRemove()), "\n", "; ")))
 		undo.WriteString(try(strings.ReplaceAll(strings.TrimSpace(ipFallbackAdd(st.FallbackSrc)), "\n", "; ")))
 	}
+	// Vor dem Lease: Bietet der DHCP-Server dieselbe Adresse an, kann der Client sie sonst nicht
+	// übernehmen und bleibt ungebunden (am hAP gemessen). Bis zum Lease ist das Gerät hier weg;
+	// der Rückweg stellt die Adresse wieder her, notfalls über den Wächter.
+	for _, a := range st.Statics {
+		p.Steps = append(p.Steps, "feste IP "+a["address"]+" entfernen")
+		apply.WriteString("/ip address remove numbers=" + a[".id"] + "\n")
+	}
 	dc := "[find interface=" + q(st.Iface) + "]"
 	switch {
 	case st.DHCP == nil:
@@ -413,10 +420,6 @@ func buildIPDhcpPlan(st ipState) Plan {
 	apply.WriteString(":local c [/ip dhcp-client find interface=" + q(st.Iface) + "]\n:local ok false\n")
 	apply.WriteString(":for i from=1 to=40 do={ :if (!$ok) do={ :if ([/ip dhcp-client get $c status] = \"bound\") do={ :set ok true } else={ :delay 1s } } }\n")
 	apply.WriteString(":if (!$ok) do={ :error \"kein DHCP-Lease\" }\n")
-	for _, a := range st.Statics {
-		p.Steps = append(p.Steps, "feste IP "+a["address"]+" entfernen (sobald eine DHCP-Adresse da ist)")
-		apply.WriteString("/ip address remove numbers=" + a[".id"] + "\n")
-	}
 	for _, x := range st.Routes {
 		p.Steps = append(p.Steps, "feste Default-Route über "+x["gateway"]+" entfernen")
 		apply.WriteString("/ip route remove numbers=" + x[".id"] + "\n")

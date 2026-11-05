@@ -208,8 +208,9 @@ func TestIPBackToDHCP(t *testing.T) {
 		!strings.Contains(p.Undo, `:if ([:len [/ip address find address="192.168.1.20/24" interface="bridge"]] = 0) do={`) {
 		t.Fatal(p.Undo)
 	}
-	// Erst Lease, dann entfernen: ohne Lease bleibt die feste IP.
-	if a, b := strings.Index(p.Apply, "kein DHCP-Lease"), strings.Index(p.Apply, "/ip address remove"); a < 0 || a > b {
+	// Die feste IP muss vor dem Lease weg, die Route bleibt bis danach.
+	lease := strings.Index(p.Apply, "kein DHCP-Lease")
+	if a, r := strings.Index(p.Apply, "/ip address remove"), strings.Index(p.Apply, "/ip route remove"); a < 0 || lease < a || r < lease {
 		t.Fatal(p.Apply)
 	}
 	for _, w := range []string{`/ip dhcp-client disable`, `/ip address add address="192.168.1.20/24"`, `gateway="192.168.1.1"`, "mm-ip-fallback"} {
