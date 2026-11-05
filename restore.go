@@ -36,7 +36,7 @@ var (
 // verwendet, mit den installierten Paketen; "" = passt.
 func restorePkgCheck(rsc string, pk map[string]map[string]string) string {
 	hasWireless := pkgInstalled(pk["wireless"])
-	hasWifi := pkgInstalled(pk[wifiPkg]) || pkgInstalled(pk["wifi-qcom"])
+	hasWifi := newWifiInstalled(pk)
 	switch {
 	case rscWireless.MatchString(rsc) && !hasWireless:
 		return "Das Backup stammt aus der Zeit mit dem alten wireless-Paket, das Gerät hat jetzt das neue wifi-Paket – nach dem Zurückspielen wäre das WLAN aus. Nicht ausgeführt."

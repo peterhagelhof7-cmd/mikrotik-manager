@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -750,6 +751,112 @@ func TestRestorePkgCheck(t *testing.T) {
 		if got := restorePkgCheck(c.rsc, c.pk) != ""; got != c.blocked {
 			t.Errorf("%s: gesperrt=%v, erwartet %v", c.name, got, c.blocked)
 		}
+	}
+}
+
+func TestAxWifiPkg(t *testing.T) {
+	for board, want := range map[string]string{
+		"cAPGi-5HaxD2HaxD":    "wifi-qcom", // cAP ax
+		"C52iG-5HaxD2HaxD":    "wifi-qcom", // hAP ax²
+		"C53UiG+5HPaxD2HPaxD": "wifi-qcom", // hAP ax³
+		"wAPG-5HaxD2HaxD":     "wifi-qcom", // wAP ax
+		"L41G-2axD":           "wifi-qcom", // hAP ax lite
+		"E62iUGS-2axD5axT":    "",          // hAP ax S (MediaTek)
+		"RBcAPGi-5acD2nD-XL":  "",          // cAP XL ac
+		"RBwAPG-5HacD2HnD":    "",          // wAP ac
+		"CRS112-8P-4S":        "",
+		"":                    "",
+		"cAP ax":              "wifi-qcom", // board-name = Verkaufsname (real so gesehen)
+		"hAP ax^2":            "wifi-qcom",
+		"hAP ax3":             "wifi-qcom",
+		"hAP ax lite":         "wifi-qcom",
+		"hAP ax S":            "",
+		"cAP XL ac":           "",
+		"hAP ac^2":            "",
+		"Chateau LTE18 ax":    "wifi-qcom",
+		"wax":                 "",
+		"A42G-HbeP":           "wifi-mediatek", // hAP be lite
+		"hAP be lite":         "wifi-mediatek",
+	} {
+		if got := axWifiPkg(board); got != want {
+			t.Errorf("%s: %q, erwartet %q", board, got, want)
+		}
+	}
+	// Modell + Board-Name wie von boardName geliefert
+	if axWifiPkg("cAPGi-5HaxD2HaxD", "cAP ax") != "wifi-qcom" || axWifiPkg("E62iUGS-2axD5axT", "hAP ax S") != "" ||
+		axWifiPkg("RBcAPGi-5acD2nD-XL", "cAP XL ac") != "" || axWifiPkg("", "cAP ax") != "wifi-qcom" {
+		t.Error("Modell + Board-Name")
+	}
+	if axWifiPkg("A42G-HbeP", "hAP be lite") != "wifi-mediatek" {
+		t.Error("hAP be lite")
+	}
+}
+
+func TestDeadRadios(t *testing.T) {
+	ifc := func(n string, off bool, cur string) *wlanIfc {
+		return &wlanIfc{WlanIf: WlanIf{Name: n, Disabled: off, Radio: &RadioCfg{Current: cur}}}
+	}
+	s := &wlanState{pkg: "wifi", ifs: []*wlanIfc{ifc("wifi1", false, " (disabled)"), ifc("wifi2", false, "5180/be"), ifc("wifi3", true, ""),
+		ifc("wifi4", false, "2437 (no available channels)"), {WlanIf: WlanIf{Name: "v", Master: "wifi1"}}}}
+	if got := strings.Join(deadRadios(s), ","); got != "wifi1" {
+		t.Fatal(got)
+	}
+	s.pkg = "wireless"
+	if deadRadios(s) != nil {
+		t.Fatal("wireless")
+	}
+}
+
+func TestMLDRelease(t *testing.T) {
+	x := &wlanIfc{WlanIf: WlanIf{Name: "wifi1"}, mld: "mld1"}
+	c := mldRelease(x)
+	if c.apply != "/interface wifi set [find name=\"wifi1\"] !mld-interface\n" || !strings.Contains(c.undo, `mld-interface="mld1"`) {
+		t.Fatalf("%+v", c)
+	}
+	cr := &centralRadio{x: x, nets: []CentralNet{{SSID: "n"}}, auth: []string{"wpa2-psk"}}
+	s := &wlanState{pkg: "wifi", ifs: []*wlanIfc{x}}
+	if sc := centralScriptWifi(s, []*centralRadio{cr}, CentralWLAN{Country: "germany"}, "bridge"); !strings.Contains(sc, "!mld-interface") {
+		t.Fatal(sc)
+	}
+}
+
+func TestScriptsKeepSecretsOffLog(t *testing.T) {
+	a := applyScript("120000", `/interface wifi security add passphrase="geheim"`)
+	if !strings.Contains(a, "geheim") || !strings.Contains(a, `:set mmApplied "done 120000"`) || !strings.Contains(a, `:set mmApplied "failed 120000"`) {
+		t.Fatal(a)
+	}
+	w := watchScript(300, "mm-undo-1", `/x "alt"`)
+	if !strings.HasPrefix(w, ":delay 300s\n") || !strings.Contains(w, `/system script find name="mm-undo-1"`) || !strings.Contains(w, `/x "alt"`) ||
+		!strings.Contains(w, `/system script remove [find name="mm-undo-1"]`) {
+		t.Fatal(w)
+	}
+	// Einzelne Skripte auf dem Gerät tragen keine Passwörter mehr.
+	for _, f := range []string{"settings.go", "migrate.go", "cloudmove.go"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		for _, m := range regexp.MustCompile(`"/system/script/add"[^\n]*`).FindAllString(string(b), -1) {
+			if strings.Contains(m, "=source=") {
+				t.Errorf("%s: %s", f, m)
+			}
+		}
+	}
+}
+
+func TestNoRadio(t *testing.T) {
+	radio := map[string]map[string]string{"wifi1": {"interface": "wifi1"}, "wifi2": {"interface": "wifi2"}}
+	if !noRadio(map[string]string{"name": "mld1"}, radio) {
+		t.Error("mld1 gilt als Funkteil")
+	}
+	if noRadio(map[string]string{"name": "wifi1"}, radio) {
+		t.Error("wifi1")
+	}
+	if noRadio(map[string]string{"name": "wifi3", "master-interface": "wifi1"}, radio) {
+		t.Error("virtuelles WLAN")
+	}
+	if noRadio(map[string]string{"name": "wifi1"}, nil) {
+		t.Error("ohne Funkteil-Liste bleibt alles sichtbar")
 	}
 }
 

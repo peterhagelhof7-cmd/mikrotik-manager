@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +31,59 @@ import (
 const wifiPkg = "wifi-qcom-ac"
 
 var wifiChips = map[string]bool{"IPQ4018": true, "IPQ4019": true, "QCA9984": true, "QCA9888": true}
+
+// ax-Geräte (Wi-Fi 6, Qualcomm) brauchen wifi-qcom; das alte wireless-Paket kennt
+// ihre Funkchips nicht und legt keine Schnittstellen an. Das passiert z. B., wenn
+// Netinstall für alle Geräte wireless mitinstalliert. Erkennung am Board-Namen:
+// Erkennung am RouterBOARD-Modell (Typcode) oder am Verkaufsnamen (board-name):
+// cAPGi-5HaxD2HaxD / „cAP ax“, C52iG-5HaxD2HaxD / „hAP ax^2“, C53UiG+5HPaxD2HPaxD
+// (hAP ax³), wAPG-5HaxD2HaxD (wAP ax), L41G-2axD (hAP ax lite) …
+// Nicht: E62iUGS-2axD5axT / „hAP ax S“ (Paket ungeklärt: wifi-mediatek gibt es nur
+// für arm, nicht für arm64).
+// hAP be lite (A42G-HbeP, arm, Funkchip mt7992) braucht wifi-mediatek.
+var (
+	axModelRe = regexp.MustCompile(`[25]H?P?axD`)
+	axNameRe  = regexp.MustCompile(`(?i)(^|\s)ax($|\s|\^|²|³|[23]\b)`)
+	axNotRe   = regexp.MustCompile(`(?i)^E62|\bax S$`)
+	mtkRe     = regexp.MustCompile(`(?i)^A42G|^hAP be lite$`)
+)
+
+// axWifiPkg liefert das WLAN-Paket für ein Gerät, dessen Funkchip das alte
+// wireless-Paket nicht kennt, "" = kein (bekanntes) solches Gerät.
+// names: Modell und/oder Board-Name.
+func axWifiPkg(names ...string) string {
+	hit := false
+	for _, n := range names {
+		if mtkRe.MatchString(n) {
+			return "wifi-mediatek"
+		}
+		if axNotRe.MatchString(n) {
+			return ""
+		}
+		hit = hit || axModelRe.MatchString(n) || axNameRe.MatchString(n)
+	}
+	if !hit {
+		return ""
+	}
+	return "wifi-qcom"
+}
+
+// newWifiInstalled: Läuft eines der neuen WLAN-Pakete?
+func newWifiInstalled(pk map[string]map[string]string) bool {
+	return pkgInstalled(pk[wifiPkg]) || pkgInstalled(pk["wifi-qcom"]) || pkgInstalled(pk["wifi-mediatek"])
+}
+
+// boardName: RouterBOARD-Modell (Typcode, z. B. cAPGi-5HaxD2HaxD) und Board-Name
+// (Verkaufsname, z. B. „cAP ax“).
+func boardName(ctx context.Context, cl *routeros.Client) (model, board string) {
+	if r, err := printAll(ctx, cl, "/system/resource/print", "=.proplist=board-name"); err == nil && len(r) > 0 {
+		board = r[0]["board-name"]
+	}
+	if r, err := printAll(ctx, cl, "/system/routerboard/print", "=.proplist=model"); err == nil && len(r) > 0 {
+		model = r[0]["model"]
+	}
+	return model, board
+}
 
 // flashReserve bleibt nach der Umstellung mindestens frei.
 const flashReserve = 64 << 10
@@ -86,6 +140,9 @@ type migration struct {
 	ifs    []legacyIf
 	resume string // "" = neu | install | config | restore
 	backup string // .backup-Datei auf dem Manager (Rückweg)
+	// ax: ax-Gerät ohne passendes WLAN-Paket – nur Paket tauschen (wireless raus,
+	// ax rein), keine Konfiguration zu übernehmen.
+	ax string
 }
 
 // migState ist der Fortschritt einer Umstellung, gespeichert auf dem Manager.
@@ -163,7 +220,12 @@ func (p *Poller) planMigrate(ctx context.Context, cl *routeros.Client, id string
 	if err != nil {
 		return Plan{Action: "wifimigrate"}, err
 	}
-	wifiOn := pkgInstalled(pk[wifiPkg]) || pkgInstalled(pk["wifi-qcom"])
+	wifiOn := newWifiInstalled(pk)
+	if ax := axWifiPkg(boardName(ctx, cl)); ax != "" && !wifiOn {
+		// ax-Geräte haben nie eine übersetzbare wireless-Konfiguration – auch
+		// eine unterbrochene Reparatur wird einfach erneut geplant.
+		return planAx(ctx, cl, pk, ax, checkUpdates)
+	}
 	st := p.loadMigState(id)
 	plan := Plan{Action: "wifimigrate"}
 	warn := "Unterbrochene Umstellung gefunden (begonnen %s)."
@@ -256,6 +318,112 @@ func authLabel(a string) string {
 	return strings.ToUpper(a)
 }
 
+// planAx plant die Reparatur eines ax-Geräts: wireless deinstallieren (falls
+// vorhanden), Paket ax (wifi-qcom, wifi-mediatek) aus dem Internet installieren.
+func planAx(ctx context.Context, cl *routeros.Client, pk map[string]map[string]string, ax string, checkUpdates bool) (Plan, error) {
+	p := Plan{Action: "wifimigrate"}
+	if pk[ax] == nil && checkUpdates {
+		// Die installierbaren Pakete kennt RouterOS erst nach einer Update-Prüfung;
+		// die Liste füllt sich verzögert.
+		runIgnoringDisconnect(ctx, cl, 60*time.Second, "/system/package/update/check-for-updates")
+		var err error
+		for i := 0; i < 10; i++ {
+			if pk, err = readPackages(ctx, cl); err != nil {
+				return p, err
+			}
+			if pk[ax] != nil {
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
+	}
+	if pk[ax] == nil {
+		p.Blocked = "Das Paket " + ax + " wird für dieses Gerät nicht angeboten (keine Internetverbindung zum MikroTik-Server?)."
+		return p, nil
+	}
+	res, err := printAll(ctx, cl, "/system/resource/print", "=.proplist=free-hdd-space")
+	if err != nil || len(res) == 0 {
+		return p, fmt.Errorf("Systemressourcen lesen: %v", err)
+	}
+	free, _ := strconv.ParseInt(res[0]["free-hdd-space"], 10, 64)
+	var oldSize int64
+	if pkgInstalled(pk["wireless"]) {
+		oldSize, _ = strconv.ParseInt(pk["wireless"]["size"], 10, 64)
+	}
+	newSize, _ := strconv.ParseInt(pk[ax]["size"], 10, 64)
+	left := free + oldSize - newSize
+	if left < flashReserve {
+		p.Blocked = fmt.Sprintf("Zu wenig Flash: frei %d KB, %s braucht %d KB (mind. %d KB müssen frei bleiben). Alte Dateien auf dem Gerät löschen.",
+			(free+oldSize)>>10, ax, newSize>>10, flashReserve>>10)
+		return p, nil
+	}
+	p.mig = &migration{ax: ax}
+	p.Steps = []string{"Backup auf den Manager"}
+	if pkgInstalled(pk["wireless"]) {
+		p.Steps = append(p.Steps, "Paket wireless deinstallieren – Neustart (es unterstützt den Funkchip dieses Geräts nicht, das Gerät hat damit kein WLAN)")
+	}
+	p.Steps = append(p.Steps,
+		fmt.Sprintf("Paket %s aus dem Internet installieren (%d KB) – Neustart", ax, newSize>>10),
+		"prüfen, ob die WLAN-Schnittstellen da sind",
+		"keine WLAN-Konfiguration zu übernehmen – danach WLAN am Gerät („WLAN“) oder über die zentrale WLAN-Verwaltung einrichten")
+	p.Warn = []string{
+		"Das Gerät braucht Internetzugang zum Herunterladen des Pakets.",
+		fmt.Sprintf("Danach sind noch ca. %d KB Flash frei.", left>>10)}
+	return p, nil
+}
+
+// doMigrateAx führt die Reparatur eines ax-Geräts aus (siehe planAx). *cl wird
+// nach jedem Neustart durch die neue Verbindung ersetzt (nil nach Fehler).
+func (p *Poller) doMigrateAx(ctx context.Context, id string, x *Job, name string, cl **routeros.Client, ax string) error {
+	p.jobs.step(x, name, "erstelle Backup und lade es auf den Manager …")
+	bk, _, err := p.backupToManager(ctx, id, *cl, "vor-"+ax)
+	if err != nil {
+		return fmt.Errorf("Backup: %w – nichts geändert", err)
+	}
+	p.jobs.step(x, name, "Backup gespeichert: %s", bk)
+
+	pk, err := readPackagesT(ctx, *cl)
+	if err != nil {
+		return err
+	}
+	if pkgInstalled(pk["wireless"]) {
+		p.jobs.step(x, name, "deinstalliere wireless – Neustart …")
+		if *cl, err = p.pkgChange(ctx, id, *cl, x, name, "uninstall", "wireless", 3*time.Minute); err != nil {
+			return err
+		}
+		if pk, err = readPackagesT(ctx, *cl); err != nil {
+			return err
+		}
+		if pkgInstalled(pk["wireless"]) {
+			return fmt.Errorf("wireless ist nach dem Neustart noch installiert – sonst nichts geändert")
+		}
+		p.jobs.step(x, name, "wireless entfernt")
+	}
+
+	p.jobs.step(x, name, "installiere %s (Download aus dem Internet) – Neustart …", ax)
+	if *cl, err = p.pkgChange(ctx, id, *cl, x, name, "enable", ax, 10*time.Minute); err != nil {
+		return fmt.Errorf("%w – das Gerät hat jetzt kein WLAN-Paket; erneut ausführen installiert %s", err, ax)
+	}
+	if pk, err = readPackagesT(ctx, *cl); err != nil {
+		return err
+	}
+	if !pkgInstalled(pk[ax]) {
+		return fmt.Errorf("%s ist nach dem Neustart nicht installiert – erneut ausführen versucht es nochmals", ax)
+	}
+	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ifs, err := printAll(rctx, *cl, "/interface/wifi/print", "=.proplist=name")
+	cancel()
+	if err != nil {
+		return fmt.Errorf("WLAN-Schnittstellen lesen: %w", err)
+	}
+	if len(ifs) == 0 {
+		return fmt.Errorf("%s installiert, aber keine WLAN-Schnittstellen – Funkchip wird nicht unterstützt?", ax)
+	}
+	p.jobs.step(x, name, "%s installiert, %d WLAN-Schnittstellen – WLAN jetzt einrichten", ax, len(ifs))
+	p.Trigger(id)
+	return nil
+}
+
 // planMigrateFresh prüft, ob und wie das Gerät umgestellt werden kann.
 // checkUpdates: Paketliste notfalls vom MikroTik-Server holen (dauert einige Sekunden).
 func planMigrateFresh(ctx context.Context, cl *routeros.Client, checkUpdates bool) (Plan, error) {
@@ -264,7 +432,7 @@ func planMigrateFresh(ctx context.Context, cl *routeros.Client, checkUpdates boo
 	if err != nil {
 		return p, err
 	}
-	if pkgInstalled(pk[wifiPkg]) || pkgInstalled(pk["wifi-qcom"]) {
+	if newWifiInstalled(pk) {
 		p.Noop = true
 		p.Steps = []string{"Das Gerät verwendet bereits das neue wifi-Paket – nichts zu tun"}
 		return p, nil
@@ -656,6 +824,9 @@ func (p *Poller) doMigrate(ctx context.Context, id string, x *Job) error {
 		return nil
 	}
 	mig := plan.mig
+	if mig.ax != "" {
+		return p.doMigrateAx(ctx, id, x, name, &cl, mig.ax)
+	}
 
 	// Unterbrochene Umstellung ohne gespeicherten Fortschritt: erst den Zustand
 	// vor der Umstellung herstellen, dann neu beginnen.
@@ -933,15 +1104,8 @@ func (p *Poller) applyWifiConfig(ctx context.Context, id string, cl *routeros.Cl
 	}
 
 	p.jobs.step(x, name, "spiele WLAN-Konfiguration ein …")
-	removeScriptNamed(rctx, cl, "mm-wifi")
-	if _, err := cl.RunContext(rctx, "/system/script/add", "=name=mm-wifi", "=source="+script, "=comment="+mmComment,
-		"=policy=read,write,policy,test,sensitive"); err != nil {
-		return fmt.Errorf("Skript anlegen: %w", err)
-	}
-	_, runErr := cl.RunContext(rctx, "/system/script/run", "=number=mm-wifi")
-	removeScriptNamed(rctx, cl, "mm-wifi")
-	if runErr != nil {
-		return fmt.Errorf("Konfiguration einspielen: %w", runErr)
+	if err := p.runQuiet(rctx, cl, script, 90*time.Second); err != nil {
+		return fmt.Errorf("Konfiguration einspielen: %w", err)
 	}
 
 	// Prüfen

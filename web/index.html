@@ -114,7 +114,25 @@ pre.diff .add{color:#7fdca4}pre.diff .del{color:#f0a0a0}pre.diff .gap{color:var(
     <button role="tab" data-tab="tabCentral" title="Zeigt die zentrale WLAN-Verwaltung: eine WLAN-Konfiguration, die auf allen ausgewählten Geräten gleich ausgerollt wird. Umschalten ändert nichts.">Zentrale WLAN-Verwaltung <span id="cBadge"></span></button>
     <button role="tab" data-tab="tabAuto" title="Zeigt die automatischen Updates: zu einer festen Zeit werden die Geräte nacheinander aktualisiert, auf Wunsch mit RouterBOARD-Firmware. Umschalten ändert nichts.">Automatische Updates <span id="aBadge"></span></button>
     <button role="tab" data-tab="tabNet" title="Zeigt das Netzwerk als Baum: Wurzel ist der Router oder der zentrale Switch, darunter je Port die verbundenen MAC-Adressen (mit IP und Hostname) und die weiteren Geräte. Nur lesend.">Netzwerk</button>
+    <button role="tab" data-tab="tabCloud" title="Zieht verwaltete Geräte mit einem Mehrfach-Code in die MikroTik-Manager Cloud um. Umschalten ändert nichts.">Cloud-Umzug</button>
   </nav>
+  <div id="tabCloud" hidden>
+    <div class="card">
+      <h3>Umzug in die Cloud</h3>
+      <div class="hint">Bringt Geräte in die MikroTik-Manager Cloud. Dort unter <b>Kunden &amp; Anmeldung</b> einen <b>Mehrfach-Code</b> erzeugen und den Befehl hier einfügen. Die Geräte landen bei dem Kunden und Standort des Codes.<br>
+        Je Gerät: Backup auf diesen Manager, Tunnel einrichten, Handshake abwarten. Kommt kein Tunnel zustande, wird die Änderung zurückgenommen. <b>Danach verwaltet nur noch die Cloud das Gerät</b>: Dieser Manager kommt nicht mehr darauf und zeigt es als „in der Cloud“. Die Geräte brauchen ausgehend UDP zum Cloud-Hub.</div>
+      <label for="clCode" style="margin-top:10px">Anmelde-Befehl aus der Cloud</label>
+      <textarea id="clCode" rows="3" spellcheck="false" autocomplete="off" style="width:100%" title="Der Befehl oder die Adresse https://…/enroll/<Code>.rsc. Ein Einmal-Code reicht nur für ein Gerät."></textarea>
+      <div class="btns" style="justify-content:flex-start;align-items:center">
+        <button class="primary" id="clCheck" title="Prüft den Code bei der Cloud und die Geräte. Verbraucht den Code nicht, ändert nichts.">Prüfen</button>
+        <span class="hint" id="clMsg"></span>
+      </div>
+      <div id="clList" style="margin-top:8px"></div>
+      <div class="btns" style="justify-content:flex-start" id="clRunBox" hidden>
+        <button class="primary" id="clRun" title="Zieht die angehakten Geräte nacheinander um (nach Rückfrage). Fortschritt steht oben.">Ausgewählte Geräte umziehen</button>
+      </div>
+    </div>
+  </div>
   <div id="tabNet" hidden>
     <div class="card">
       <h3>Netzwerk <span class="scopeName mute" style="font-weight:normal"></span></h3>
@@ -193,6 +211,11 @@ pre.diff .add{color:#7fdca4}pre.diff .del{color:#f0a0a0}pre.diff .gap{color:var(
   </div>
   <div id="tabDev">
   <div class="tiles" id="tiles"></div>
+  <div class="card" id="snmpBox">
+    <h3>SNMP</h3>
+    <div class="hint">SNMP v2c mit Community <span class="mono">public</span>, nur lesend, auf allen erreichbaren Geräten einschalten. Je Gerät mit Backup und Wächter, nacheinander. Einzeln ein- und ausschalten: „Einstellungen“ in der Zeile.</div>
+    <div class="btns" style="justify-content:flex-start"><button id="snmpAll" title="Fragt nach und schaltet SNMP dann auf jedem erreichbaren Gerät ein. Fortschritt steht oben.">SNMP auf allen Geräten einschalten</button></div>
+  </div>
   <div class="card" id="noCred" hidden>
     <h3>Noch keine Standard-Zugangsdaten</h3>
     <div class="hint">Ohne Zugangsdaten wird nur <span class="mono">admin</span> ohne Passwort versucht (Werkszustand älterer Geräte).
@@ -250,6 +273,22 @@ pre.diff .add{color:#7fdca4}pre.diff .del{color:#f0a0a0}pre.diff .gap{color:var(
     <label style="display:flex;gap:8px;align-items:center;color:var(--fg)"><input type="checkbox" id="sRemove" checked style="width:auto" title="Wenn angehakt, werden feste IP und feste Default-Route entfernt – aber erst, wenn eine DHCP-Adresse bezogen wurde.">feste IP + feste Default-Route entfernen (Gerät bekommt neue IP)</label>
     <div class="btns" style="justify-content:flex-start"><button id="sDhcpPrev" title="Zeigt, was geändert würde. Ändert nichts auf dem Gerät.">Vorschau</button></div>
   </div>
+  <div class="card" style="margin:0 0 10px">
+    <h3>IP-Einstellungen</h3>
+    <div class="hint">Feste Adresse für das Gerät (Access Point, Switch). Bleibt das Gateway 5 Minuten stumm, schaltet das Gerät seinen DHCP-Client zusätzlich ein und meldet sich so auch in einem anderen Netz wieder; antwortet das Gateway wieder, geht der DHCP-Client aus. Wird verweigert, wenn das Gerät Router ist (DHCP-Server oder mehrere Netze).</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 8px;margin-top:6px">
+      <div><label for="sIpAddr">IP-Adresse</label><input id="sIpAddr" placeholder="192.168.1.20" title="Neue feste IPv4-Adresse des Geräts."></div>
+      <div><label for="sIpMask">Subnetz</label><input id="sIpMask" placeholder="255.255.255.0 oder 24" title="Subnetzmaske oder Präfixlänge."></div>
+      <div><label for="sIpGw">Gateway</label><input id="sIpGw" placeholder="192.168.1.1" title="Router im selben Netz. Ihn prüft das Gerät für den Rückfall auf DHCP jede Minute per Ping."></div>
+      <div><label for="sIpDns">DNS</label><input id="sIpDns" placeholder="192.168.1.1, 9.9.9.9" title="Ein oder mehrere DNS-Server, getrennt durch Komma."></div>
+    </div>
+    <div class="btns" style="justify-content:flex-start"><button id="sIpPrev" title="Zeigt, was geändert würde. Ändert nichts auf dem Gerät.">Vorschau feste IP</button><button id="sIpDhcp" title="Zeigt, was geändert würde, um die feste IP zu entfernen und wieder DHCP zu nutzen. Ändert nichts auf dem Gerät.">Vorschau zurück auf DHCP</button></div>
+  </div>
+  <div class="card" style="margin:0 0 10px">
+    <h3>SNMP</h3>
+    <div class="hint">SNMP v2c mit Community <span class="mono">public</span>, nur lesend. Jeder im Netz des Geräts kann damit Gerätedaten lesen, wenn die Firewall es nicht einschränkt.</div>
+    <div class="btns" style="justify-content:flex-start"><button id="sSnmpOn" title="Zeigt, was geändert würde. Ändert nichts auf dem Gerät.">Vorschau einschalten</button><button id="sSnmpOff" title="Zeigt, was geändert würde. Ändert nichts auf dem Gerät.">Vorschau ausschalten</button></div>
+  </div>
   <div id="sPlan" class="card" style="margin:0" hidden></div>
   <div class="btns"><button type="button" onclick="this.closest('dialog').close()" title="Schließt den Dialog, nichts wird geändert.">Schließen</button></div>
 </dialog>
@@ -259,8 +298,8 @@ pre.diff .add{color:#7fdca4}pre.diff .del{color:#f0a0a0}pre.diff .gap{color:var(
   <div class="hint">Werte ändern, dann „Vorschau“. Geändert wird erst mit „Jetzt ausführen“ – mit Backup und automatischem Zurückrollen. SSID bis 32 Zeichen, Passwort 8–63 Zeichen, jeweils nur ASCII (keine Umlaute).</div>
   <div id="wBody" style="margin-top:10px">lese WLAN aus …</div>
   <div id="wMig" class="card" style="margin:10px 0 0" hidden>
-    <h3>Umstellung auf das neue wifi-Paket</h3>
-    <div class="hint">Ersetzt das alte Paket wireless durch wifi-qcom-ac (nur für neuere Funkchips, z. B. cAP ac, hAP ac²) und übernimmt SSIDs, Passwörter, Schalter an/aus und die Bridge-Zuordnung. Zwei Neustarts, das WLAN dieses Geräts ist ca. 5 Minuten aus.</div>
+    <h3 id="wMigTitle">Umstellung auf das neue wifi-Paket</h3>
+    <div class="hint" id="wMigHint">Ersetzt das alte Paket wireless durch wifi-qcom-ac (nur für neuere Funkchips, z. B. cAP ac, hAP ac²) und übernimmt SSIDs, Passwörter, Schalter an/aus und die Bridge-Zuordnung. Zwei Neustarts, das WLAN dieses Geräts ist ca. 5 Minuten aus.</div>
     <div class="btns" style="justify-content:flex-start"><button id="wMigPrev" title="Prüft, ob das Gerät umgestellt werden kann (Funkchip, freier Flash, Paket verfügbar), und zeigt, was übernommen wird. Ändert nichts auf dem Gerät.">Umstellung prüfen</button></div>
   </div>
   <div id="wPlan" class="card" style="margin:10px 0 0" hidden></div>
@@ -332,7 +371,7 @@ function row(d) {
   if (d.latestVersion && v && !v.startsWith(d.latestVersion)) tags.push(`<span class="badge b-warn">→ ${esc(d.latestVersion)}</span>`);
   const fwUpd = d.currentFirmware && d.upgradeFirmware && d.currentFirmware !== d.upgradeFirmware;
   const fw = d.routerboard ? esc(d.currentFirmware) + (fwUpd ? `<span class="badge b-warn">→ ${esc(d.upgradeFirmware)}</span>` : '') : (d.apiStatus === 'ok' ? '<span class="mute">kein RouterBOARD</span>' : '');
-  const st = {ok: '<span class="badge b-ok">ok</span>', auth: '<span class="badge b-bad">Login</span>', unreachable: '<span class="badge b-bad">nicht erreichbar</span>', error: '<span class="badge b-bad">Fehler</span>'}[d.apiStatus] || '<span class="badge b-mute">…</span>';
+  const st = {ok: '<span class="badge b-ok">ok</span>', auth: '<span class="badge b-bad">Login</span>', unreachable: '<span class="badge b-bad">nicht erreichbar</span>', error: '<span class="badge b-bad">Fehler</span>', moved: '<span class="badge b-mute" title="Wird von der Cloud verwaltet. „Vergessen“ entfernt das Gerät aus dieser Liste.">in der Cloud</span>'}[d.apiStatus] || '<span class="badge b-mute">…</span>';
   const credTag = d.hasOwnCred ? ' <span class="badge b-mute" title="eigene Zugangsdaten">eigene</span>' : '';
   return `<tr class="${major(v) === '6' ? 'v6' : ''}">
     <td><span class="dot ${online(d) ? 'on' : 'off'}" title="zuletzt gesehen: ${esc(ago(d.lastSeen))}"></span><a class="devlink" href="#dev/${encodeURIComponent(d.id)}" title="Öffnet die Detailseite des Geräts: Ports, Konfig-Historie, Dateien, Backups, Einstellungen und Standort.">${esc(d.identity || '—')}</a>${d.location ? `<div class="hint">${esc(d.location)}</div>` : ''}</td>
@@ -340,20 +379,27 @@ function row(d) {
     <td>${esc(d.model || d.board)}<div class="mono mute">${esc(d.arch)}${d.serial ? ' · ' + esc(d.serial) : ''}</div>${d.wwanMonth ? `<div><span class="badge b-mute" title="LTE-Router: Volumen über LTE im laufenden Monat (Stichtag 1.). Einzelheiten auf der Detailseite.">LTE</span> <span class="hint">${fmtBytes(d.wwanMonth.rx + d.wwanMonth.tx)} im ${esc(d.wwanMonth.month)}</span></div>` : ''}</td>
     <td>${esc(v)}${tags.join('')}<div class="mono mute">${esc(d.channel)}</div></td>
     <td>${fw}</td>
-    <td>${esc(d.wirelessPkg || '')}${central && central.enabled && (central.devices || []).includes(d.id) ? ' <span class="badge b-ok" title="WLAN wird zentral verwaltet (Tab „Zentrale WLAN-Verwaltung“).">zentral</span>' : ''}
+    <td>${esc(d.wirelessPkg || '')}${axBoard(d) && d.wirelessPkg !== 'wifi' ? ' <span class="badge b-warn" title="Gerät ohne passendes WLAN-Paket (braucht wifi-qcom oder wifi-mediatek) – kein WLAN. Reparatur: Knopf „WLAN“ → „Umstellung prüfen“.">kein WLAN – Paket fehlt</span>' : ''}${central && central.enabled && (central.devices || []).includes(d.id) ? ' <span class="badge b-ok" title="WLAN wird zentral verwaltet (Tab „Zentrale WLAN-Verwaltung“).">zentral</span>' : ''}
       ${d.wirelessPkg && d.wlanClients ? `<div><button class="small" data-clients="${esc(d.id)}" title="Klappt die WLAN-Verbindungen dieses Geräts auf bzw. zu (SSID, Band, Signal, Rate, Dauer, MAC, IP). Wird jede Minute aktualisiert. Ändert nichts.">${openClients.has(d.id) ? '▾' : '▸'} ${d.wlanClients.length} Client${d.wlanClients.length === 1 ? '' : 's'}</button>${d.wlanClientsError ? ` <span class="badge b-warn" title="${esc(d.wlanClientsError)}">alt</span>` : ''}</div>` : ''}</td>
     <td>${uptime(d.uptime)}</td>
     <td title="${esc(d.apiError)}">${st}${credTag}${d.apiError ? `<div class="hint">${esc(d.apiError)}</div>` : ''}${d.hostKeyChanged ? `<div><span class="badge b-bad" title="Das Gerät meldet sich per SSH mit einem anderen Schlüssel als beim ersten Kontakt (${esc(d.hostKeyChanged)}). Backups, Updates und Rollback sind deshalb gesperrt.">SSH-Schlüssel geändert</span> <button class="small" data-hostkey="${esc(d.id)}" title="Nach Rückfrage: übernimmt genau diesen neuen SSH-Schlüssel des Geräts. Nur wählen, wenn das Gerät neu aufgesetzt wurde (Netinstall, Werksreset). Ändert nichts auf dem Gerät.">SSH-Schlüssel übernehmen</button></div>` : ''}</td>
     <td>${jobCell(d)}</td>
     <td><button class="small" data-upd="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Nach Rückfrage: speichert ein Backup auf dem Manager, installiert eine neuere RouterOS-Version (falls vorhanden) und danach die RouterBOARD-Firmware. Das Gerät startet dabei ein- bis zweimal neu (je ca. 1–2 Minuten offline).">Update</button> <button class="small" data-reboot="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Nach Rückfrage: startet das Gerät neu (ca. 1–2 Minuten offline) und prüft, dass es wieder erreichbar ist.">Neustart</button>
       <button class="small" data-cred="${esc(d.id)}" title="Öffnet einen Dialog für eigene Zugangsdaten nur dieses Geräts. Ändert nichts auf dem Gerät.">Login</button> <button class="small" data-poll="${esc(d.id)}" title="Liest das Gerät sofort neu aus (Version, Firmware, Status). Ändert nichts auf dem Gerät.">↻</button>
-      <div style="margin-top:4px"><button class="small" data-set="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Öffnet die Einstellungen: Name setzen, alle Ports in die Bridge, DHCP-Client auf der Bridge (WLAN: eigener Knopf). Ändert erst nach Vorschau und ausdrücklichem Klick auf „Jetzt ausführen“.">Einstellungen</button> ${d.wirelessPkg ? `<button class="small" data-wlan="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Öffnet die WLAN-Übersicht dieses Geräts: SSID, Passwort und an/aus je Schnittstelle ändern; bei altem wireless-Paket zusätzlich die Umstellung auf das neue wifi-Paket. Ändert erst nach Vorschau und Klick auf „Jetzt ausführen“.">WLAN</button> ` : ''}<button class="small" data-backup="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Erstellt sofort ein Backup (Binär-Backup + Text-Export) und speichert es auf dem Manager. Die Kopie auf dem Gerät wird danach gelöscht. Kein Neustart, keine Änderung der Konfiguration.">Backup</button>
+      <div style="margin-top:4px"><button class="small" data-set="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Öffnet die Einstellungen: Name setzen, alle Ports in die Bridge, DHCP-Client auf der Bridge (WLAN: eigener Knopf). Ändert erst nach Vorschau und ausdrücklichem Klick auf „Jetzt ausführen“.">Einstellungen</button> ${(d.wirelessPkg || axBoard(d)) ? `<button class="small" data-wlan="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Öffnet die WLAN-Übersicht dieses Geräts: SSID, Passwort und an/aus je Schnittstelle ändern; bei altem wireless-Paket zusätzlich die Umstellung auf das neue wifi-Paket. Ändert erst nach Vorschau und Klick auf „Jetzt ausführen“.">WLAN</button> ` : ''}<button class="small" data-backup="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Erstellt sofort ein Backup (Binär-Backup + Text-Export) und speichert es auf dem Manager. Die Kopie auf dem Gerät wird danach gelöscht. Kein Neustart, keine Änderung der Konfiguration.">Backup</button>
       ${d.backups ? `<button class="small" data-blist="${esc(d.id)}" title="Zeigt die auf dem Manager gespeicherten Backups dieses Geräts zum Herunterladen.">${d.backups} Dateien · ${esc(ago(d.lastBackup))}</button>` : '<span class="hint">kein Backup</span>'}</div></td>
   </tr>`;
 }
 
-const busy = d => d.job && d.job.running;
-const kindName = k => ({update: 'Update', reboot: 'Neustart', backup: 'Backup', bridge: 'Bridge', dhcp: 'DHCP-Client', wlan: 'WLAN', wifimigrate: 'Umstellung wifi', restore: 'Rollback', wwan: 'WWAN / LTE-Router'})[k] || k;
+const busy = d => (d.job && d.job.running) || d.cloudUrl;
+const MIG_HINT = 'Ersetzt das alte Paket wireless durch wifi-qcom-ac (nur für neuere Funkchips, z. B. cAP ac, hAP ac²) und übernimmt SSIDs, Passwörter, Schalter an/aus und die Bridge-Zuordnung. Zwei Neustarts, das WLAN dieses Geräts ist ca. 5 Minuten aus.';
+// Geräte ohne Treiber im wireless-Paket (wifi-qcom, wifi-mediatek) – wie axWifiPkg in migrate.go
+const axBoard = d => {
+  const n = [d.model || '', d.board || ''];
+  if (n.some(x => /^E62|\bax S$/i.test(x))) return false;
+  return n.some(x => /^A42G|^hAP be lite$/i.test(x) || /[25]H?P?axD/.test(x) || /(^|\s)ax($|\s|\^|²|³|[23]\b)/i.test(x));
+};
+const kindName = k => ({update: 'Update', reboot: 'Neustart', backup: 'Backup', bridge: 'Bridge', dhcp: 'DHCP-Client', wlan: 'WLAN', wifimigrate: 'Umstellung wifi', restore: 'Rollback', wwan: 'WWAN / LTE-Router', ipconf: 'IP-Einstellungen', snmp: 'SNMP', cloudmove: 'Cloud-Umzug'})[k] || k;
 
 // Einstellungen: Name direkt; Bridge/DHCP erst Vorschau, dann Ausführen mit Rückroll-Wächter.
 function settingsDialog(d) {
@@ -371,6 +417,11 @@ function settingsDialog(d) {
   };
   $('#sBridgePrev').onclick = () => preview('bridge');
   $('#sDhcpPrev').onclick = () => preview('dhcp');
+  $('#sIpAddr').value = d.ip || ''; $('#sIpMask').value = ''; $('#sIpGw').value = ''; $('#sIpDns').value = '';
+  $('#sIpPrev').onclick = () => previewChange($('#sPlan'), $('#sDlg'), d, 'Feste IP', {action: 'ipconf', ipMode: 'static', ipAddress: $('#sIpAddr').value, ipMask: $('#sIpMask').value, ipGateway: $('#sIpGw').value, ipDns: $('#sIpDns').value});
+  $('#sIpDhcp').onclick = () => previewChange($('#sPlan'), $('#sDlg'), d, 'Zurück auf DHCP', {action: 'ipconf', ipMode: 'dhcp'});
+  $('#sSnmpOn').onclick = () => previewChange($('#sPlan'), $('#sDlg'), d, 'SNMP einschalten', {action: 'snmp', snmpOn: true});
+  $('#sSnmpOff').onclick = () => previewChange($('#sPlan'), $('#sDlg'), d, 'SNMP ausschalten', {action: 'snmp', snmpOn: false});
   $('#sDlg').showModal();
 }
 function showPlanMsg(t) { boxMsg($('#sPlan'), t); }
@@ -418,6 +469,17 @@ async function wlanDialog(d) {
   let info;
   try { info = await (async () => { const r = await fetch(`/api/devices/${encodeURIComponent(d.id)}/wlan`, {cache: 'no-store'}); if (!r.ok) throw new Error(await r.text()); return r.json(); })(); }
   catch (e) { $('#wBody').textContent = '❌ ' + e.message; return; }
+  $('#wMigTitle').textContent = 'Umstellung auf das neue wifi-Paket';
+  $('#wMigHint').textContent = MIG_HINT;
+  if (!info.pkg && info.fix) {
+    // ax-Gerät mit falschem/fehlendem WLAN-Paket (z. B. nach Netinstall mit wireless)
+    $('#wBody').innerHTML = `<div style="color:var(--warn)">⚠ Keine WLAN-Schnittstellen: Dieses ax-Gerät braucht das Paket <b>${esc(info.fix)}</b> – installiert ist ${(d.wirelessPkg === 'wireless') ? 'das alte Paket wireless, das seinen Funkchip nicht unterstützt' : 'kein WLAN-Paket'}.</div>`;
+    $('#wMigTitle').textContent = `WLAN-Paket reparieren (${info.fix})`;
+    $('#wMigHint').textContent = `Entfernt das Paket wireless (falls vorhanden) und installiert ${info.fix} aus dem Internet. Bis zu zwei Neustarts, vorher Backup auf den Manager. Danach WLAN einrichten (hier oder über die zentrale WLAN-Verwaltung).`;
+    $('#wMig').hidden = false;
+    $('#wMigPrev').onclick = () => previewChange($('#wPlan'), $('#wDlg'), d, `WLAN-Paket reparieren (${info.fix})`, {action: 'wifimigrate'}, 'prüfe Gerät und Paketangebot … (kann bis zu einer Minute dauern)');
+    return;
+  }
   if (!info.pkg) { $('#wBody').textContent = 'Das Gerät hat keine WLAN-Schnittstellen.'; return; }
   const pkgName = (info.pkg === 'wireless' ? 'altes Paket wireless' : 'neues Paket wifi')
     + (central && central.enabled && (central.devices || []).includes(d.id) ? ' · <span style="color:var(--warn)">⚠ wird zentral verwaltet – Änderungen hier werden abgelehnt, bitte im Tab „Zentrale WLAN-Verwaltung“</span>' : '');
@@ -682,6 +744,24 @@ document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => {
   if (b.dataset.tab === 'tabAuto') { loadAuto(); renderAutoState(); }
 });
 
+// --- Cloud-Umzug ---
+$('#clCheck').onclick = async () => {
+  $('#clMsg').textContent = 'prüfe Code und Geräte …'; $('#clList').innerHTML = ''; $('#clRunBox').hidden = true;
+  let r;
+  try { r = await api('POST', '/api/cloud-move/preview', {code: $('#clCode').value}); }
+  catch (e) { $('#clMsg').textContent = '❌ ' + e.message; return; }
+  const list = (r.results || []).sort((a, b) => (a.identity || '').localeCompare(b.identity || ''));
+  $('#clMsg').textContent = `Code gültig: ${r.base}`;
+  $('#clList').innerHTML = list.map(x => `<label style="display:flex;gap:8px;align-items:center;color:var(--fg)"><input type="checkbox" style="width:auto" data-cl="${esc(x.id)}" ${x.ok ? 'checked' : 'disabled'}><b>${esc(x.identity)}</b> <span class="hint">${esc(x.msg)}</span></label>`).join('');
+  $('#clRunBox').hidden = !list.some(x => x.ok);
+};
+$('#clRun').onclick = async () => {
+  const ids = [...document.querySelectorAll('[data-cl]:checked')].map(x => x.dataset.cl);
+  if (!ids.length || !confirm(`${ids.length} Gerät(e) in die Cloud umziehen?\nDieser Manager verliert danach den Zugriff auf diese Geräte.`)) return;
+  try { const r = await api('POST', '/api/cloud-move/apply', {code: $('#clCode').value, ids}); showResults('Umzug in die Cloud', r.results); $('#clRunBox').hidden = true; load(); }
+  catch (e) { $('#clMsg').textContent = '❌ ' + e.message; }
+};
+
 // --- Automatische Updates ---
 let auto = null;
 const DAYS = [[1, 'Mo'], [2, 'Di'], [3, 'Mi'], [4, 'Do'], [5, 'Fr'], [6, 'Sa'], [0, 'So']];
@@ -871,7 +951,7 @@ function render() {
   const n6 = ds.filter(d => major(d.version) === '6').length;
   const n7 = ds.filter(d => major(d.version) === '7').length;
   const nUpd = ds.filter(d => d.currentFirmware && d.upgradeFirmware && d.currentFirmware !== d.upgradeFirmware).length;
-  const nErr = ds.filter(d => d.apiStatus && d.apiStatus !== 'ok').length;
+  const nErr = ds.filter(d => d.apiStatus && d.apiStatus !== 'ok' && d.apiStatus !== 'moved').length;
   $('#tiles').innerHTML = [
     [ds.length, 'Geräte'], [n7, 'RouterOS 7'], [n6, 'RouterOS 6 (Migration)'], [nUpd, 'Firmware-Update'], [nErr, 'API-Problem'],
     [ds.filter(d => !d.lastBackup || Date.now() - new Date(d.lastBackup) > 36 * 3600 * 1000).length, 'ohne Backup (36 h)']
@@ -1008,6 +1088,17 @@ $('#bBody').addEventListener('click', async e => {
   finally { b.disabled = false; b.textContent = 'Zurückspielen'; }
 });
 
+$('#snmpAll').onclick = async () => {
+  const devs = (data.devices || []).filter(d => d.apiStatus === 'ok');
+  if (!devs.length) { flash('Kein erreichbares Gerät'); return; }
+  if (!confirm(`SNMP v2c (Community public, nur lesend) auf ${devs.length} Gerät(en) einschalten?`)) return;
+  const res = [];
+  for (const d of devs) {
+    try { res.push({...await api('POST', `/api/devices/${encodeURIComponent(d.id)}/change`, {action: 'snmp', snmpOn: true}), id: d.id, identity: d.identity}); }
+    catch (e) { res.push({id: d.id, identity: d.identity, ok: false, msg: e.message}); }
+  }
+  showResults('SNMP einschalten', res); load();
+};
 function showResults(title, res) {
   $('#results').hidden = false;
   $('#resTitle').textContent = title;
@@ -1099,7 +1190,7 @@ function renderDetail() {
   const d = detailDev(); if (!d || $('#detail').hidden) return;
   // Beim Neuzeichnen (alle 15 s) eine laufende Eingabe im Standort-Feld nicht verlieren
   const typing = document.activeElement && document.activeElement.id === 'dLoc' ? $('#dLoc').value : null;
-  const st = {ok: '<span class="badge b-ok">ok</span>', auth: '<span class="badge b-bad">Login</span>', unreachable: '<span class="badge b-bad">nicht erreichbar</span>', error: '<span class="badge b-bad">Fehler</span>'}[d.apiStatus] || '<span class="badge b-mute">…</span>';
+  const st = {ok: '<span class="badge b-ok">ok</span>', auth: '<span class="badge b-bad">Login</span>', unreachable: '<span class="badge b-bad">nicht erreichbar</span>', error: '<span class="badge b-bad">Fehler</span>', moved: '<span class="badge b-mute" title="Wird von der Cloud verwaltet. „Vergessen“ entfernt das Gerät aus dieser Liste.">in der Cloud</span>'}[d.apiStatus] || '<span class="badge b-mute">…</span>';
   const kv = [['IP', `<a href="http://${esc(d.ip)}/" target="_blank" rel="noopener">${esc(d.ip)}</a>`], ['MAC', `<span class="mono">${esc(d.mac || '')}</span>`],
     ['Modell', esc(d.model || d.board || '')], ['Seriennummer', `<span class="mono">${esc(d.serial || '–')}</span>`],
     ['RouterOS', esc(d.version || '') + (d.latestVersion && d.version && !d.version.startsWith(d.latestVersion) ? ` <span class="badge b-warn">→ ${esc(d.latestVersion)}</span>` : '') + `<div class="hint">Kanal ${esc(d.channel || '–')}</div>`],
@@ -1116,7 +1207,7 @@ function renderDetail() {
     <h3 style="margin-top:16px">Einstellungen &amp; Aktionen</h3>
     <div class="btns" style="justify-content:flex-start;flex-wrap:wrap">
       <button class="small" data-set="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Name setzen, alle Ports in die Bridge, DHCP-Client – erst Vorschau, dann ausführen.">Einstellungen</button>
-      ${d.wirelessPkg ? `<button class="small" data-wlan="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="WLAN dieses Geräts ansehen und ändern (mit Vorschau).">WLAN</button>` : ''}
+      ${(d.wirelessPkg || axBoard(d)) ? `<button class="small" data-wlan="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="WLAN dieses Geräts ansehen und ändern (mit Vorschau).">WLAN</button>` : ''}
       <button class="small" data-cred="${esc(d.id)}" title="Eigene Zugangsdaten nur für dieses Gerät. Ändert nichts auf dem Gerät.">Login</button>
       <button class="small" data-upd="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Nach Rückfrage: Backup, dann RouterOS und Firmware aktualisieren (1–2 Neustarts).">Update</button>
       <button class="small" data-reboot="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Nach Rückfrage: Gerät neu starten.">Neustart</button>

@@ -58,6 +58,9 @@ type WlanInfo struct {
 	Country    string   `json:"country"` // klein geschrieben wie bei wireless, z. B. "germany"
 	Auths      []string `json:"auths"`   // wählbare Verschlüsselung
 	Interfaces []WlanIf `json:"interfaces"`
+	// Fix: ax-Gerät ohne passendes WLAN-Paket – dieses Paket fehlt (Reparatur
+	// über die Umstellung, siehe planAx).
+	Fix string `json:"fix,omitempty"`
 }
 
 // RadioEdit ändert Funkwerte eines Funkteils; nil = unverändert.
@@ -139,6 +142,7 @@ type wlanIfc struct {
 	rawWidth string            // Breite, wie RouterOS sie speichert
 	raw      map[string]string // alle Werte der Schnittstelle (zum Zurücksetzen)
 	country  string            // wirksames Land, klein geschrieben
+	mld      string            // ausgeschalteter Multi-Link-Verbund, der das Funkteil blockiert
 }
 
 type wlanState struct {
@@ -366,7 +370,14 @@ func readWLAN(ctx context.Context, cl *routeros.Client) (*wlanState, error) {
 		}
 	}
 	clients := countClients(ctx, cl, "/interface/wifi/registration-table/print")
+	mldOff := map[string]bool{}
 	for _, m := range l {
+		mldOff[m["name"]] = noRadio(m, radio) && m["disabled"] == "true"
+	}
+	for _, m := range l {
+		if noRadio(m, radio) {
+			continue
+		}
 		x := &wlanIfc{cfg: m["configuration"], WlanIf: WlanIf{
 			Name: m["name"], Master: masterOf(m), SSID: m["configuration.ssid"],
 			Auth: m["security.authentication-types"], Passphrase: m["security.passphrase"],
@@ -375,6 +386,9 @@ func readWLAN(ctx context.Context, cl *routeros.Client) (*wlanState, error) {
 			Clients: clients[m["name"]], Bridge: ports[m["name"]], VLAN: pvid[m["name"]],
 		}}
 		x.raw, x.Hidden = m, m["configuration.hide-ssid"] == "true"
+		if mldOff[m["mld-interface"]] {
+			x.mld = m["mld-interface"]
+		}
 		if x.Profile == "" {
 			x.Profile = cfgs[x.cfg]["security"]
 		}
@@ -422,6 +436,34 @@ func readWLAN(ctx context.Context, cl *routeros.Client) (*wlanState, error) {
 	return s, nil
 }
 
+// noRadio erkennt Schnittstellen ohne Funkteil: Der hAP be lite meldet neben wifi1/wifi2
+// ein mld1 (WiFi-7-Multi-Link) ohne Band und Kanäle. Der Manager verwaltet es nicht.
+// Liefert das Gerät keine Funkteil-Liste, sagt das nichts über die Schnittstelle.
+func noRadio(m map[string]string, radio map[string]map[string]string) bool {
+	return len(radio) > 0 && masterOf(m) == "" && radio[m["name"]] == nil
+}
+
+// mldRelease löst ein Funkteil vom ausgeschalteten Multi-Link-Verbund. wifi-mediatek bindet
+// wifi1/wifi2 ab Werk an mld1; solange das aus ist, bleiben beide stumm, auch mit disabled=no.
+func mldRelease(x *wlanIfc) wlanChange {
+	n := q(x.Name)
+	return wlanChange{step: fmt.Sprintf("%s: von Multi-Link %s lösen (sonst sendet das Funkteil nicht)", x.Name, x.mld),
+		apply: "/interface wifi set [find name=" + n + "] !mld-interface\n",
+		undo:  try("/interface wifi set [find name=" + n + "] mld-interface=" + q(x.mld))}
+}
+
+// deadRadios nennt eingeschaltete Funkteile, die das Gerät trotzdem als aus meldet. Das
+// running-Flag taugt dafür nicht: Beim wifi-Paket heißt es „Client verbunden“.
+func deadRadios(s *wlanState) []string {
+	var out []string
+	for _, x := range s.ifs {
+		if s.pkg == "wifi" && x.Radio != nil && !x.Disabled && strings.Contains(x.Radio.Current, "(disabled)") {
+			out = append(out, x.Name)
+		}
+	}
+	return out
+}
+
 // legacyAuth liefert Authentifizierung und Schlüssel eines wireless-Sicherheitsprofils.
 func legacyAuth(p map[string]string) (auth, psk string) {
 	switch p["mode"] {
@@ -450,6 +492,13 @@ func (p *Poller) ReadWLAN(ctx context.Context, id string) (WlanInfo, error) {
 			return err
 		}
 		info.Pkg = s.pkg
+		if s.pkg == "" {
+			if ax := axWifiPkg(boardName(ctx, cl)); ax != "" {
+				if pk, err := readPackages(ctx, cl); err == nil && !pkgInstalled(pk[ax]) {
+					info.Fix = ax
+				}
+			}
+		}
 		info.Auths = authOptions[s.pkg]
 		info.Interfaces = []WlanIf{}
 		for _, x := range s.ifs {
@@ -791,6 +840,11 @@ func planWLAN(ctx context.Context, cl *routeros.Client, edits []WlanEdit, countr
 	}
 	// Funkwerte und Land
 	var extra []wlanChange
+	for _, x := range s.ifs {
+		if w := wants[x.Name]; w != nil && x.mld != "" && ((w.dis != nil && !*w.dis) || (w.dis == nil && !x.Disabled)) {
+			extra = append(extra, mldRelease(x))
+		}
+	}
 	radioTouched := map[string]bool{}
 	for _, x := range s.ifs {
 		w := wants[x.Name]

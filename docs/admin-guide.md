@@ -277,6 +277,43 @@ hochladen → *System → Backup → Restore*. Ein Backup gehört zu genau diese
 
 Bridge und DHCP laufen mit Vorschau und Sicherheitsnetz (Abschnitt 8).
 
+### IP-Einstellungen und SNMP
+
+**IP-Einstellungen** (Knopf „Einstellungen“): feste Adresse, Subnetz, Gateway und DNS oder
+zurück auf DHCP, für Access Points und Switches. Verweigert, wenn ein DHCP-Server läuft oder
+mehrere Netze anliegen (Router). Der Rückfall auf DHCP hat zwei Stufen:
+
+- Während der Änderung gilt der Wächter: Erreicht der Manager das Gerät nicht, stellt es
+  nach 5 Minuten den alten Zustand wieder her.
+- Danach pingt ein Zeitplan `mm-ip-fallback` jede Minute das Gateway. Bleibt es 5 Minuten
+  stumm, schaltet er den DHCP-Client ein, die feste IP bleibt daneben stehen. Antwortet das
+  Gateway wieder, geht der Client aus. Ein Gateway, das Ping nicht beantwortet, führt also nur
+  zu einer zweiten Adresse. Im Device-Mode `home` sperrt RouterOS Zeitpläne; dann gibt es nur
+  den Wächter, die Vorschau weist darauf hin.
+
+**SNMP** (je Gerät unter „Einstellungen“, für alle als Karte in der Geräteliste): v2c,
+Community `public`, nur lesend. Wer das Gerät per UDP 161 erreicht, kann Gerätedaten lesen;
+beschränken lässt sich das nur mit einer Firewall auf dem Gerät.
+
+## Umzug in die Cloud
+
+Tab **Cloud-Umzug**: bringt verwaltete Geräte in die MikroTik-Manager Cloud.
+
+1. In der Cloud unter **Kunden & Anmeldung** einen **Mehrfach-Code** erzeugen. Ein Einmal-Code
+   reicht nur für ein Gerät; danach bricht der Lauf für die übrigen ohne Änderung ab.
+2. Den angezeigten Befehl einfügen, **Prüfen** (verbraucht den Code nicht), Geräte wählen,
+   **Ausgewählte Geräte umziehen**.
+
+Der Manager spricht selbst mit der Cloud und führt das Abschluss-Skript auf dem Gerät aus. Das
+Gerät braucht darum kein `/tool fetch` (im Device-Mode `home` gesperrt), nur RouterOS 7 und
+ausgehend UDP zum Cloud-Hub. Je Gerät: Backup, Tunnel einrichten, bis zu 60 s auf den Handshake
+warten. Ohne Handshake wird alles zurückgenommen; den Eintrag in der Cloud dann „Vergessen“.
+
+Danach verwaltet **nur die Cloud** das Gerät: Sie setzt das Passwort des Benutzers
+`mikrotik-manager` neu, dieser Manager kommt nicht mehr darauf. Das Gerät bleibt als „in der
+Cloud“ in der Liste und wird nicht mehr ausgelesen. Backups bleiben hier liegen. „Vergessen“
+entfernt den Eintrag; findet MNDP das Gerät wieder, erscheint es als neues Gerät.
+
 ## 6. WLAN
 
 ### 6.1 WLAN-Dialog eines Geräts (Knopf „WLAN“)

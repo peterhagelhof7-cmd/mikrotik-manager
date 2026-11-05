@@ -516,3 +516,46 @@ Monats; nur erfassen, keine Schwelle; mm und Cloud; noch kein Testgerät.
   tiefste Vorfahr; ohne Vorfahren direkt am Fremdgerät. Fehlt die Gateway-Information, werden
   entstehende Schleifen aufgelöst (Gerät direkt am Fremdgerät) statt endlos zu rechnen.
 - **WLAN-Punkt im Baum** aus `wifi monitor` statt running-Flag (wie auf der Detailseite).
+
+## 2026-11-05 – WLAN-Paket wifi-mediatek, feste IP, SNMP
+
+- **hAP be lite** (`A42G…`, arm) bekommt in der WLAN-Reparatur `wifi-mediatek`. Das Paket gibt
+  es auf dem Update-Server (7.25.1) nur für arm. hAP ax S bleibt ausgenommen, sein Paket ist
+  nicht belegt.
+- **Feste IP nur bei eindeutiger Schnittstelle:** Ein DHCP-Server oder mehrere Netze sperren den
+  Plan, weil der Manager WAN und LAN nicht sicher unterscheiden kann. Tunnel und LTE zählen
+  nicht, damit Cloud-Geräte nicht an `wg-mm` geändert werden.
+- **Rückfall auf DHCP zusätzlich zur festen IP, nicht statt ihr:** Ein stummes Gateway beweist
+  keinen Umzug (Ping kann gesperrt sein). Beide Adressen nebeneinander schaden nicht, eine
+  entfernte feste IP dagegen schon.
+- **Schnittstellen ohne Funkteil** (`mld1` des hAP be lite, WiFi-7-Multi-Link) lässt der Manager
+  aus: Sie haben keine Kanäle und sperrten sonst den zentralen Plan.
+- **SNMP:** v2c antwortet der Agent ohne eigene Einstellung, nötig sind `enabled=yes` und eine
+  Community ohne Anmeldung. Der Manager ändert keine Firewall.
+
+## 2026-11-05 – Umzug in die Cloud
+
+- **Der Manager meldet an, nicht das Gerät:** Er schickt den öffentlichen Schlüssel selbst an
+  `/enroll/<Code>` und führt die Antwort per Skript aus. Damit entfällt `/tool fetch` (Device-Mode
+  `home`), und der Code liegt nie auf dem Gerät. Die Cloud bleibt dafür unverändert.
+- **Beide Manager nutzen `mikrotik-manager`:** Das Abschluss-Skript setzt das Passwort neu, der
+  Umzug ist also endgültig. Geprüft wird über die offene Verbindung (Handshake); ohne Handshake
+  wird zurückgenommen, sonst wäre das Gerät für beide Manager weg.
+- **Umgezogene Geräte bleiben sichtbar**, aber ohne Abfragen: Fehlversuche würden sonst das Log
+  der Geräte füllen, und MNDP brächte gelöschte Einträge ohnehin zurück.
+- Fremde Antworten laufen nie als Skript: nur HTTPS, und die Antwort muss mit dem Kopf des
+  Abschluss-Skripts beginnen. Fehlermeldungen enthalten den Code nicht.
+
+## 2026-11-05 – hAP be lite: mld1, Funkteil-Prüfung, Passwörter im Geräte-Log
+
+- **`wifi-mediatek` bindet `wifi1`/`wifi2` ab Werk an `mld1`, und das ist aus.** Dann bleiben beide
+  stumm, obwohl `disabled=no` gilt (`mld-interface not enabled`, `monitor`: `disabled`). Der Manager
+  löst sie mit `!mld-interface`. Multi-Link nutzt er nicht, weil Bridge und virtuelle WLANs an den
+  Funkteilen hängen. Ein eingeschaltetes `mld1` bleibt unangetastet.
+- **Nach WLAN-Änderungen zählt der Laufzustand mit:** Meldet `monitor` ein eingeschaltetes Funkteil
+  als `disabled`, rollt der Manager zurück. Das `running`-Flag taugt nicht, es heißt „Client verbunden“.
+- **Skripte mit Passwörtern laufen per `/execute`.** RouterOS 7.25.1 schreibt bei `/system script add`
+  und `set` sowie `/file add` den ganzen Text ins System-Log (am hAP mit Testwerten gemessen), bei
+  `/execute` nicht, auch nicht bei 8 KB. Einzelne Befehle maskiert das Log selbst. `mm-undo` ist
+  deshalb nur noch ein leerer Merker, den Rückweg trägt der Wächter-Job.
+

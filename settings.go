@@ -15,11 +15,13 @@ import (
 // Konfigurationsänderungen, bei denen sich der Manager aussperren kann
 // (Bridge, DHCP-Client), laufen mit Sicherheitsnetz („Commit-Confirm“):
 //  1. Backup auf den Manager
-//  2. Skript mm-undo (Rückweg) und mm-apply (Änderung) auf dem Gerät anlegen
-//  3. Wächter starten: nach rollbackAfter mm-undo ausführen, falls es noch existiert
-//  4. mm-apply im Hintergrund ausführen (überlebt den Verbindungsabbruch)
+//  2. Merker mm-undo auf dem Gerät anlegen (leeres Skript)
+//  3. Wächter starten: nach rollbackAfter den Rückweg ausführen, falls der Merker noch existiert
+//  4. Änderung im Hintergrund ausführen (überlebt den Verbindungsabbruch)
 //  5. Gerät neu verbinden (ggf. unter neuer IP), Ergebnis prüfen
-//  6. Erfolg → mm-undo löschen (= bestätigen). Kommt der Manager nicht mehr
+//     Änderung und Rückweg laufen per /execute: RouterOS schreibt den Text angelegter
+//     Skripte ins System-Log (7.25.1 gemessen), samt WLAN-Passwörtern; /execute nicht.
+//  6. Erfolg → Merker löschen (= bestätigen). Kommt der Manager nicht mehr
 //     dran, rollt das Gerät selbst zurück.
 const rollbackAfter = 5 * time.Minute
 
@@ -50,6 +52,13 @@ type ChangeReq struct {
 	RemoveStatic bool       `json:"removeStatic,omitempty"`
 	WLAN         []WlanEdit `json:"wlan,omitempty"`
 	Country      string     `json:"country,omitempty"` // WLAN-Land für alle Funkteile
+	// ipconf: IPMode static | dhcp; IPMask als Präfix (24) oder Maske (255.255.255.0)
+	IPMode    string `json:"ipMode,omitempty"`
+	IPAddress string `json:"ipAddress,omitempty"`
+	IPMask    string `json:"ipMask,omitempty"`
+	IPGateway string `json:"ipGateway,omitempty"`
+	IPDNS     string `json:"ipDns,omitempty"` // eine oder mehrere, getrennt durch Komma oder Leerzeichen
+	SNMPOn    bool   `json:"snmpOn,omitempty"`
 }
 
 // q setzt einen Wert für RouterOS-Skripte in Anführungszeichen.
@@ -400,6 +409,9 @@ func (p *Poller) planFor(ctx context.Context, cl *routeros.Client, id string, re
 			return Plan{Action: "central", Blocked: "Das Gerät ist für die zentrale WLAN-Verwaltung nicht ausgewählt."}, nil
 		}
 		return planCentral(ctx, cl, c, p.plan2G(c, id))
+	case "ipconf":
+		d, _ := p.st.Get(id)
+		return planIPConf(ctx, cl, d.IP, req)
 	case "wlan":
 		if p.Managed(id) {
 			return Plan{Action: "wlan", Blocked: "Das WLAN dieses Geräts wird zentral verwaltet – Änderungen im Tab „Zentrale WLAN-Verwaltung“."}, nil
@@ -416,6 +428,8 @@ func makePlan(ctx context.Context, cl *routeros.Client, req ChangeReq) (Plan, er
 		return planDHCP(ctx, cl, req.RemoveStatic)
 	case "wlan":
 		return planWLAN(ctx, cl, req.WLAN, req.Country)
+	case "snmp":
+		return planSNMP(ctx, cl, req.SNMPOn)
 	}
 	return Plan{}, fmt.Errorf("unbekannte Aktion %q", req.Action)
 }
@@ -424,7 +438,7 @@ func makePlan(ctx context.Context, cl *routeros.Client, req ChangeReq) (Plan, er
 func (p *Poller) StartChange(ids []string, req ChangeReq) []Result {
 	fn := func(ctx context.Context, id string, x *Job) error { return p.doChange(ctx, id, x, req) }
 	switch req.Action {
-	case "bridge", "dhcp", "wlan", "central", "wwan":
+	case "bridge", "dhcp", "wlan", "central", "wwan", "ipconf", "snmp":
 	case "wifimigrate":
 		fn = p.doMigrate
 	default:
@@ -485,7 +499,7 @@ func (p *Poller) doChange(ctx context.Context, id string, x *Job, req ChangeReq)
 	}
 	p.jobs.step(x, name, "Rückroll-Wächter aktiv (%s), führe aus: %s", rollbackAfter, strings.Join(plan.Steps, "; "))
 	rctx, cancel = context.WithTimeout(ctx, 15*time.Second)
-	_, err = cl.RunContext(rctx, "/execute", "=script=/system script run mm-apply-"+tag)
+	_, err = cl.RunContext(rctx, "/execute", "=script="+applyScript(tag, plan.Apply))
 	cancel()
 	if err != nil {
 		return fmt.Errorf("Ausführen: %w (Wächter rollt ggf. zurück)", err)
@@ -534,10 +548,15 @@ func (p *Poller) doChange(ctx context.Context, id string, x *Job, req ChangeReq)
 	if err != nil {
 		return fmt.Errorf("Prüfung: %w (Wächter rollt zurück)", err)
 	}
+	if action == "wlan" || action == "central" {
+		if dead := p.waitRadios(ctx, cl); len(dead) > 0 {
+			check.Noop, check.Steps = false, []string{"Funkteil läuft nicht: " + strings.Join(dead, ", ")}
+		}
+	}
 	if !check.Noop {
 		// Gerät ist erreichbar → gleich zurückrollen statt 5 Minuten auf den Wächter zu warten.
 		p.jobs.step(x, name, "Änderung nicht vollständig wirksam (%s) – rolle sofort zurück …", strings.Join(check.Steps, "; "))
-		uerr := runIgnoringDisconnect(ctx, cl, time.Minute, "/system/script/run", "=number=mm-undo-"+tag)
+		uerr := p.runQuiet(ctx, cl, plan.Undo, time.Minute)
 		if uerr == nil && undoFile != "" {
 			// Backup wird geladen, das Gerät startet neu
 			return fmt.Errorf("Änderung nicht vollständig wirksam – das Gerät lädt das Backup von vorher und startet neu")
@@ -552,7 +571,7 @@ func (p *Poller) doChange(ctx context.Context, id string, x *Job, req ChangeReq)
 		}
 		return fmt.Errorf("Änderung nicht vollständig wirksam – alter Zustand wiederhergestellt (vermutlich lehnt das Gerät einen Wert ab)")
 	}
-	if action == "dhcp" {
+	if action == "dhcp" || (action == "ipconf" && req.IPMode == "dhcp") {
 		rctx, cancel = context.WithTimeout(ctx, 15*time.Second)
 		l, err := printAll(rctx, cl, "/ip/dhcp-client/print", "=.proplist=interface,status,address")
 		cancel()
@@ -586,9 +605,57 @@ func (p *Poller) doChange(ctx context.Context, id string, x *Job, req ChangeReq)
 	return nil
 }
 
-// installScripts legt mm-undo-<tag>/mm-apply-<tag> an und startet den Wächter.
-// Der Tag trennt die Skripte aufeinanderfolgender Änderungen: Der Wächter einer
-// früheren Änderung darf nie den Rückweg einer späteren ausführen.
+// applyScript umschließt eine Änderung. Das Ergebnis steht in einer globalen Variable
+// (waitApplied), zusätzlich im Log: Das ist auf manchen Geräten leer bzw. nicht per API lesbar.
+func applyScript(tag, src string) string {
+	return ":global mmApplied \"\"\n:do {\n" + src + "\n:set mmApplied \"done " + tag + "\"\n:log info \"mm-apply-done " + tag + "\"\n} on-error={ :set mmApplied \"failed " + tag + "\"; :log error \"mm-apply-failed " + tag + "\" }\n"
+}
+
+// watchScript führt nach secs Sekunden den Rückweg aus, falls der Merker noch da ist.
+func watchScript(secs int, marker, undo string) string {
+	m := q(marker)
+	return fmt.Sprintf(":delay %ds\n:if ([:len [/system script find name=%s]] > 0) do={\n:do {\n%s\n} on-error={}\n/system script remove [find name=%s]\n:log warning \"mikrotik-manager: nicht bestaetigt - Aenderung zurueckgerollt\"\n}\n",
+		secs, m, undo, m)
+}
+
+// runQuiet führt ein Skript aus, ohne dass sein Text ins Log gelangt, und wartet auf das
+// Ergebnis. Bleibt es aus (Verbindung weg, Gerät startet neu), zählt das nicht als Fehler:
+// Die Aufrufer prüfen den Zustand danach selbst.
+func (p *Poller) runQuiet(ctx context.Context, cl *routeros.Client, src string, timeout time.Duration) error {
+	tag := "q" + randomPassword(8)
+	rctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	_, err := cl.RunContext(rctx, "/execute", "=script="+applyScript(tag, src))
+	cancel()
+	if err != nil {
+		return err
+	}
+	if p.waitApplied(ctx, cl, tag, timeout) == "failed" {
+		return fmt.Errorf("das Gerät meldet einen Fehler im Skript")
+	}
+	return nil
+}
+
+// waitRadios gibt eingeschalteten Funkteilen kurz Zeit und nennt die, die aus bleiben.
+func (p *Poller) waitRadios(ctx context.Context, cl *routeros.Client) []string {
+	var dead []string
+	for i := 0; i < 5; i++ {
+		rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		s, err := readWLAN(rctx, cl)
+		cancel()
+		if err != nil {
+			return nil
+		}
+		if dead = deadRadios(s); len(dead) == 0 {
+			return nil
+		}
+		time.Sleep(4 * time.Second)
+	}
+	return dead
+}
+
+// installScripts legt den Merker mm-undo-<tag> an und startet den Wächter. Der Tag trennt
+// aufeinanderfolgende Änderungen: Der Wächter einer früheren Änderung darf nie den Merker
+// einer späteren sehen.
 func installScripts(ctx context.Context, cl *routeros.Client, plan Plan, tag string) error {
 	l, err := printAll(ctx, cl, "/system/script/print", "=.proplist=.id,name")
 	if err != nil {
@@ -598,25 +665,16 @@ func installScripts(ctx context.Context, cl *routeros.Client, plan Plan, tag str
 		if strings.HasPrefix(s["name"], "mm-undo") {
 			return fmt.Errorf("eine frühere Änderung ist noch nicht bestätigt (%s) – ihr Wächter stellt gerade den alten Zustand her; in 5 Minuten erneut versuchen", s["name"])
 		}
-		if strings.HasPrefix(s["name"], "mm-apply") {
+		if strings.HasPrefix(s["name"], "mm-apply") { // Rest älterer Versionen
 			cl.RunContext(ctx, "/system/script/remove", "=.id="+s[".id"])
 		}
 	}
-	undoName, applyName := "mm-undo-"+tag, "mm-apply-"+tag
-	// Fertig- bzw. Fehlermeldung im Log, damit der Manager nicht raten muss (waitApplied)
-	// Ergebnis zusätzlich in einer globalen Variable: das Log ist auf manchen
-	// Geräten leer bzw. nicht per API lesbar.
-	apply := ":global mmApplied \"\"\n:do {\n" + plan.Apply + "\n:set mmApplied \"done " + tag + "\"\n:log info \"mm-apply-done " + tag + "\"\n} on-error={ :set mmApplied \"failed " + tag + "\"; :log error \"mm-apply-failed " + tag + "\" }\n"
-	for _, s := range []struct{ name, src string }{{undoName, plan.Undo}, {applyName, apply}} {
-		if _, err := cl.RunContext(ctx, "/system/script/add", "=name="+s.name, "=source="+s.src,
-			"=comment="+mmComment, "=policy=read,write,policy,test,reboot,sensitive,ftp,password,sniff,romon"); err != nil {
-			return err
-		}
+	marker := "mm-undo-" + tag
+	if _, err := cl.RunContext(ctx, "/system/script/add", "=name="+marker, "=comment="+mmComment); err != nil {
+		return err
 	}
 	// Wächter: läuft im Hintergrund weiter, auch wenn die API-Verbindung abbricht.
-	watch := fmt.Sprintf(":delay %ds\n:if ([:len [/system script find name=\"%[2]s\"]] > 0) do={ /system script run %[2]s; /system script remove [find name=\"%[2]s\"]; /system script remove [find name=\"%[3]s\"]; :log warning \"mikrotik-manager: nicht bestaetigt - Aenderung zurueckgerollt\" }",
-		int(rollbackAfter.Seconds()), undoName, applyName)
-	_, err = cl.RunContext(ctx, "/execute", "=script="+watch)
+	_, err = cl.RunContext(ctx, "/execute", "=script="+watchScript(int(rollbackAfter.Seconds()), marker, plan.Undo))
 	return err
 }
 
@@ -642,7 +700,7 @@ func (p *Poller) waitApplied(ctx context.Context, cl *routeros.Client, tag strin
 	return ""
 }
 
-// removeScripts bestätigt eine Änderung: Ohne mm-undo-<tag> tut ihr Wächter nichts.
+// removeScripts bestätigt eine Änderung: Ohne den Merker tut der Wächter nichts.
 func removeScripts(ctx context.Context, cl *routeros.Client, tag string) error {
 	l, err := printAll(ctx, cl, "/system/script/print", "=.proplist=.id,name")
 	if err != nil {

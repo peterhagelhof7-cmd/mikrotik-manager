@@ -16,6 +16,8 @@ Docker-Container (z. B. Synology).
 - **WLAN:** SSID, Passwort, Verschlüsselung (WPA2/WPA3), an/aus, Band, Kanal, Breite,
   DFS, Land – je Gerät, für alle Geräte gleichzeitig oder als
   **zentrale WLAN-Verwaltung** mit VLAN je SSID; Empfehlung per Knopf
+- **Feste IP** mit Rückfall auf DHCP und **SNMP** v2c (nur lesend), je Gerät oder für alle
+- **Umzug in die MikroTik-Manager Cloud** mit einem Mehrfach-Code
 - **Umstellung** vom alten `wireless`- auf das neue `wifi`-Paket
 - **Sicherheitsnetz:** Änderungen mit Vorschau, Backup und Wächter auf dem Gerät, der
   ohne Bestätigung nach 5 Minuten selbst zurückrollt

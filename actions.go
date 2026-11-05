@@ -82,6 +82,9 @@ func (p *Poller) withClient(ctx context.Context, d Device, fn func(ctx context.C
 	if d.IP == "" {
 		return fmt.Errorf("keine IP bekannt")
 	}
+	if d.Moved() {
+		return errMoved
+	}
 	c, _ := p.vault.For(d.ID)
 	cl, err := p.dial(ctx, d.IP, c)
 	if err != nil {

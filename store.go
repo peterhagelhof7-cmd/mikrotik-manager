@@ -55,7 +55,14 @@ type Device struct {
 
 	// vom Benutzer gepflegt (Detailseite)
 	Location string `json:"location,omitempty"` // Standort / Notiz, z. B. „Technikraum EG“
+
+	// Umzug in die Cloud (cloudmove.go): gesetzt = nur noch zur Information in der Liste
+	CloudURL string    `json:"cloudUrl,omitempty"`
+	CloudAt  time.Time `json:"cloudAt,omitempty"`
 }
+
+// Moved: Das Gerät wird von der Cloud verwaltet.
+func (d Device) Moved() bool { return d.CloudURL != "" }
 
 // Major liefert die RouterOS-Hauptversion ("6", "7") oder "".
 func (d *Device) Major() string {

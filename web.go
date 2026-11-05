@@ -142,6 +142,8 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 	mux.Handle("GET /api/wwan/usage.csv", w.auth(http.HandlerFunc(w.allWwanCSV)))
 	mux.Handle("GET /api/topology", w.auth(http.HandlerFunc(w.topology)))
 	mux.Handle("POST /api/topology/root", w.auth(http.HandlerFunc(w.setTopoRoot)))
+	mux.Handle("POST /api/cloud-move/preview", w.auth(http.HandlerFunc(w.cloudPreview)))
+	mux.Handle("POST /api/cloud-move/apply", w.auth(w.rec("Umzug in die Cloud gestartet", http.HandlerFunc(w.cloudApply))))
 	mux.Handle("POST /api/devices/{id}/location", w.auth(w.rec("Standort geändert", http.HandlerFunc(w.setLocation))))
 	return mux
 }
@@ -322,6 +324,47 @@ func (w *web) wlanBulkApply(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(rw, map[string]any{"results": w.pl.StartChange(b.IDs, ChangeReq{Action: "wlan", WLAN: []WlanEdit{b.Edit}})})
+}
+
+// readCloud liest {"code": …, "ids": […]} und prüft den Code bei der Cloud.
+func (w *web) readCloud(rw http.ResponseWriter, r *http.Request) (cloudCode, []string, bool) {
+	var req struct {
+		Code string   `json:"code"`
+		IDs  []string `json:"ids"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 65536)).Decode(&req); err != nil {
+		http.Error(rw, "ungültige Anfrage", http.StatusBadRequest)
+		return cloudCode{}, nil, false
+	}
+	c, err := parseCloudCode(req.Code)
+	if err == nil {
+		err = c.Check(r.Context())
+	}
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusBadRequest)
+		return cloudCode{}, nil, false
+	}
+	return c, req.IDs, true
+}
+
+func (w *web) cloudPreview(rw http.ResponseWriter, r *http.Request) {
+	c, ids, ok := w.readCloud(rw, r)
+	if !ok {
+		return
+	}
+	writeJSON(rw, map[string]any{"base": c.Base, "results": w.pl.CloudPreview(r.Context(), ids)})
+}
+
+func (w *web) cloudApply(rw http.ResponseWriter, r *http.Request) {
+	c, ids, ok := w.readCloud(rw, r)
+	if !ok {
+		return
+	}
+	if len(ids) == 0 { // kein „alle“ aus Versehen, siehe jobAction
+		http.Error(rw, "ids nötig", http.StatusBadRequest)
+		return
+	}
+	writeJSON(rw, map[string]any{"results": w.pl.StartCloudMove(c, ids)})
 }
 
 // jobAction startet Hintergrund-Jobs. Anders als bei den Benutzer-Aktionen

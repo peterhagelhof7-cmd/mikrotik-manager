@@ -343,6 +343,9 @@ func planCentralState(s *wlanState, bi bridgeInfo, c CentralWLAN, chan2 string) 
 			d = append(d, map[bool]string{true: "sollte aus sein", false: "sollte an sein"}[cr.off])
 		}
 		if !cr.off {
+			if x.mld != "" {
+				d = append(d, "an ausgeschaltetem Multi-Link "+x.mld)
+			}
 			n := cr.nets[0]
 			if x.SSID != n.SSID {
 				d = append(d, fmt.Sprintf("SSID %q statt %q", x.SSID, n.SSID))
@@ -617,6 +620,9 @@ func centralScriptWifi(s *wlanState, radios []*centralRadio, c CentralWLAN, br s
 		sort.Strings(keys)
 		for _, k := range keys {
 			b.WriteString(try("/interface wifi unset [find name=" + q(cr.x.Name) + "] value-name=" + k))
+		}
+		if cr.x.mld != "" {
+			b.WriteString(mldRelease(cr.x).apply)
 		}
 	}
 	for _, menu := range []string{"configuration", "security", "channel"} {

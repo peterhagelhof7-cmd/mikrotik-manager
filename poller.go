@@ -108,7 +108,7 @@ func (p *Poller) pollOne(ctx context.Context, id string) {
 	}()
 
 	d, ok := p.st.Get(id)
-	if !ok || d.IP == "" {
+	if !ok || d.IP == "" || d.Moved() {
 		return
 	}
 	cred, src := p.vault.For(id)
@@ -213,7 +213,7 @@ func (p *Poller) readDevice(ctx context.Context, ip string, c Cred) (Device, err
 				switch {
 				case name == "wifiwave2":
 					d.WirelessPkg = "wifiwave2"
-				case strings.HasPrefix(name, "wifi-qcom"):
+				case strings.HasPrefix(name, "wifi-qcom"), name == "wifi-mediatek":
 					d.WirelessPkg = "wifi"
 				case strings.HasPrefix(name, "wireless") && d.WirelessPkg == "":
 					d.WirelessPkg = "wireless"
