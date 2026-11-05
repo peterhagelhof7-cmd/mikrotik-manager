@@ -563,6 +563,9 @@ func wwanScript(s *wwanState, c WwanCfg, pins map[string]string) string {
 
 // planWwan liest das Gerät und plant (Einstieg aus planFor).
 func (p *Poller) planWwan(ctx context.Context, cl *routeros.Client, id string) (Plan, error) {
+	if d, ok := p.st.Get(id); ok && p.IsRouter(d) {
+		return Plan{Action: "wwan", Blocked: "Dieses Gerät wird im Tab Router konfiguriert."}, nil
+	}
 	c, ok := p.WwanConfig(id)
 	if !ok {
 		return Plan{Action: "wwan", Blocked: "Für dieses Gerät ist noch kein WWAN-Netz eingetragen (Detailseite → WWAN)."}, nil

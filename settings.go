@@ -413,6 +413,8 @@ func (p *Poller) planFor(ctx context.Context, cl *routeros.Client, id string, re
 			return Plan{Action: "central", Blocked: "Das Gerät ist für die zentrale WLAN-Verwaltung nicht ausgewählt."}, nil
 		}
 		return planCentral(ctx, cl, c, p.plan2G(c, id))
+	case "router":
+		return p.planRouter(ctx, cl, id)
 	case "ipconf":
 		d, _ := p.st.Get(id)
 		return planIPConf(ctx, cl, d.IP, req)
@@ -442,7 +444,7 @@ func makePlan(ctx context.Context, cl *routeros.Client, req ChangeReq) (Plan, er
 func (p *Poller) StartChange(ids []string, req ChangeReq) []Result {
 	fn := func(ctx context.Context, id string, x *Job) error { return p.doChange(ctx, id, x, req) }
 	switch req.Action {
-	case "bridge", "dhcp", "wlan", "central", "wwan", "ipconf", "snmp":
+	case "bridge", "dhcp", "wlan", "central", "wwan", "ipconf", "snmp", "router":
 	case "wifimigrate":
 		fn = p.doMigrate
 	default:
@@ -486,7 +488,7 @@ func (p *Poller) doChange(ctx context.Context, id string, x *Job, req ChangeReq)
 	tag := time.Now().Format("150405")
 	// Zentrale WLAN-Verwaltung baut alles neu auf – Rückweg ist ein Backup auf dem Gerät.
 	undoFile := ""
-	if action == "central" {
+	if action == "central" || action == "router" {
 		rctx, cancel = context.WithTimeout(ctx, 90*time.Second)
 		undoFile, err = saveBackup(rctx, cl, "mm-undo-"+tag)
 		cancel()

@@ -561,3 +561,17 @@ Monats; nur erfassen, keine Schwelle; mm und Cloud; noch kein Testgerät.
   `/execute` nicht, auch nicht bei 8 KB. Einzelne Befehle maskiert das Log selbst. `mm-undo` ist
   deshalb nur noch ein leerer Merker, den Rückweg trägt der Wächter-Job.
 
+## 2026-11-05 – Router-Tab
+
+- **Ausrollen ersetzt alles,** statt Vorhandenes einzulesen. Ein Abgleich mit beliebiger Fremdkonfiguration
+  wäre fehleranfällig; der Rückweg ist ein Backup auf dem Gerät wie beim zentralen WLAN. Erhalten bleiben
+  der Tunnel (Schnittstelle, Adresse, Firewall-Regel an `wg-mm`) und die Benutzer.
+- **Rückfall per Zeitplan statt `check-gateway`:** `check-gateway` schaltet nach rund 20 s um, gefragt sind 60 s.
+  Das Skript `mm-router-wan` pingt zwei Adressen fest über das WAN (`/32`-Routen, nie DNS der Clients). Nach 60 s
+  Stille übernehmen zwei `/1`-Routen über das Backup WAN, die Verbindung am WAN bleibt unberührt, und
+  die normalen Distanzen 1 und 2 decken den Fall ab, dass der Link ganz weg ist.
+- **Stand der Konfiguration:** Das Skript `mm-router-cfg` trägt einen Hash aus Konfiguration und Geheimnissen.
+  Er entsteht als letzte Zeile, „nichts zu tun“ heißt also: Das Skript lief bis zum Ende.
+- **Die VLAN-Filterung geht zuletzt an,** damit die Bridge bis dahin erreichbar bleibt.
+- **Der WWAN-Bereich ist bei Routern gesperrt,** damit nie zwei Stellen dasselbe konfigurieren.
+

@@ -114,6 +114,7 @@ pre.diff .add{color:#7fdca4}pre.diff .del{color:#f0a0a0}pre.diff .gap{color:var(
     <button role="tab" data-tab="tabDev" class="active" title="Zeigt die Geräteliste mit Update, Neustart, Einstellungen, WLAN und Backups.">Geräte</button>
     <button role="tab" data-tab="tabCentral" title="Zeigt die zentrale WLAN-Verwaltung: eine WLAN-Konfiguration, die auf allen ausgewählten Geräten gleich ausgerollt wird. Umschalten ändert nichts.">Zentrale WLAN-Verwaltung <span id="cBadge"></span></button>
     <button role="tab" data-tab="tabAuto" title="Zeigt die automatischen Updates: zu einer festen Zeit werden die Geräte nacheinander aktualisiert, auf Wunsch mit RouterBOARD-Firmware. Umschalten ändert nichts.">Automatische Updates <span id="aBadge"></span></button>
+    <button role="tab" data-tab="tabRouter" title="Wählt das Gerät, das Router ist, und stellt Ports und Netzwerke ein. Umschalten ändert nichts.">Router</button>
     <button role="tab" data-tab="tabNet" title="Zeigt das Netzwerk als Baum: Wurzel ist der Router oder der zentrale Switch, darunter je Port die verbundenen MAC-Adressen (mit IP und Hostname) und die weiteren Geräte. Nur lesend.">Netzwerk</button>
     <button role="tab" data-tab="tabCloud" title="Zieht verwaltete Geräte mit einem Mehrfach-Code in die MikroTik-Manager Cloud um. Umschalten ändert nichts.">Cloud-Umzug</button>
   </nav>
@@ -132,6 +133,34 @@ pre.diff .add{color:#7fdca4}pre.diff .del{color:#f0a0a0}pre.diff .gap{color:var(
       <div class="btns" style="justify-content:flex-start" id="clRunBox" hidden>
         <button class="primary" id="clRun" title="Zieht die angehakten Geräte nacheinander um (nach Rückfrage). Fortschritt steht oben.">Ausgewählte Geräte umziehen</button>
       </div>
+    </div>
+  </div>
+  <div id="tabRouter" hidden>
+    <div class="card">
+      <h3>Router <span class="scopeName mute" style="font-weight:normal"></span></h3>
+      <div class="hint" id="rScope"></div>
+      <div class="hint">Ein Gerät wird der Router dieses Bereichs. <b>Ausrollen ersetzt seine Router-Konfiguration ganz</b>: Adressen, DHCP, NAT und Firewall. Vorher entsteht ein Backup, und kommt der Manager danach nicht mehr aufs Gerät, stellt es nach 5 Minuten den alten Zustand wieder her.</div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+        <label for="rDev" style="margin:0">Router</label>
+        <select id="rDev" style="width:auto" title="Dieses Gerät bekommt in der Geräteliste die Badge router."></select>
+        <span class="hint" id="rtMsg"></span>
+      </div>
+    </div>
+    <div class="card" id="rPortsCard" hidden>
+      <h3>Ports</h3>
+      <div class="hint"><b>WAN</b> = primärer Internetzugang. <b>Backup WAN</b> = übernimmt, wenn über das WAN 60 Sekunden keine Internetverbindung möglich ist, und gibt nach 60 stabilen Sekunden zurück. <b>Access</b> = hier hängen Switches oder Access Points.<br>
+        <b>VLAN</b> am Access-Port: leer = VLAN 1 ungetaggt, alle anderen getaggt. Ein Wert = nur dieses VLAN ungetaggt. Mehrere = nur diese getaggt, VLAN 1 darin läuft ungetaggt. Am WAN: Die Verbindung läuft über dieses VLAN, es gilt dann nirgends sonst.</div>
+      <div class="wrap wl" style="margin-top:8px"><table><thead><tr><th>Port</th><th>Rolle</th><th>Typ</th><th>VLAN</th></tr></thead><tbody id="rPorts"></tbody></table></div>
+    </div>
+    <div class="card" id="rNetsCard" hidden>
+      <h3>Netzwerke</h3>
+      <div class="hint">Adresse = Adresse des Routers im Netz, als CIDR. Netzwerke sind untereinander gesperrt und dürfen ins Internet; nur das Standard-LAN darf in die anderen. DNS leer = der Router selbst.</div>
+      <div class="wrap wl" style="margin-top:8px"><table><thead><tr><th>Adresse (CIDR)</th><th>VLAN</th><th>DHCP</th><th>Erste Adresse</th><th>Letzte Adresse</th><th>DNS</th><th></th></tr></thead><tbody id="rNets"></tbody></table></div>
+      <div class="btns" style="justify-content:flex-start;align-items:center">
+        <button class="primary" id="rSave" title="Speichert auf dem Manager. Ändert nichts am Gerät.">Speichern</button>
+        <button id="rPrev" title="Speichert und zeigt, was auf dem Gerät geändert würde. Erst „Jetzt ausführen“ ändert das Gerät.">Vorschau</button>
+      </div>
+      <div id="rPlan" class="card" style="margin:10px 0 0" hidden></div>
     </div>
   </div>
   <div id="tabNet" hidden>
@@ -368,6 +397,7 @@ const online = d => (Date.now() - new Date(d.lastSeen)) < 15 * 60 * 1000;
 function row(d) {
   const v = d.version || '';
   const tags = [];
+  if (d.router) tags.push('<span class="badge b-ok" title="Dieses Gerät ist der Router, siehe Tab Router.">router</span>');
   if (major(v) === '6') tags.push('<span class="badge b-warn" title="Migration auf RouterOS 7 ausstehend">v6</span>');
   if (d.latestVersion && v && !v.startsWith(d.latestVersion)) tags.push(`<span class="badge b-warn">→ ${esc(d.latestVersion)}</span>`);
   const fwUpd = d.currentFirmware && d.upgradeFirmware && d.currentFirmware !== d.upgradeFirmware;
@@ -403,7 +433,7 @@ const axBoard = d => {
   if (n.some(x => /^E62|\bax S$/i.test(x))) return false;
   return n.some(x => /^A42G|^hAP be lite$/i.test(x) || /[25]H?P?axD/.test(x) || /(^|\s)ax($|\s|\^|²|³|[23]\b)/i.test(x));
 };
-const kindName = k => ({update: 'Update', reboot: 'Neustart', backup: 'Backup', bridge: 'Bridge', dhcp: 'DHCP-Client', wlan: 'WLAN', wifimigrate: 'Umstellung wifi', restore: 'Rollback', wwan: 'WWAN / LTE-Router', ipconf: 'IP-Einstellungen', snmp: 'SNMP', cloudmove: 'Cloud-Umzug'})[k] || k;
+const kindName = k => ({update: 'Update', reboot: 'Neustart', backup: 'Backup', bridge: 'Bridge', dhcp: 'DHCP-Client', wlan: 'WLAN', wifimigrate: 'Umstellung wifi', restore: 'Rollback', wwan: 'WWAN / LTE-Router', router: 'Router', ipconf: 'IP-Einstellungen', snmp: 'SNMP', cloudmove: 'Cloud-Umzug'})[k] || k;
 
 // Einstellungen: Name direkt; Bridge/DHCP erst Vorschau, dann Ausführen mit Rückroll-Wächter.
 function settingsDialog(d) {
@@ -746,6 +776,7 @@ document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tabs [data-tab]').forEach(x => { x.classList.toggle('active', x === b); $('#' + x.dataset.tab).hidden = x !== b; });
   if (b.dataset.tab === 'tabCentral' && !document.querySelector('#cNets tr') && central) renderCentral(central);
   if (b.dataset.tab === 'tabAuto') { loadAuto(); renderAutoState(); }
+  if (b.dataset.tab === 'tabRouter') loadRouter();
 });
 
 // --- Cloud-Umzug ---
@@ -770,6 +801,100 @@ $('#clRun').onclick = async () => {
   if (!ids.length || !confirm(`${ids.length} Gerät(e) in die Cloud umziehen?\nDieser Manager liest danach nur noch mit.`)) return;
   try { const r = await api('POST', '/api/cloud-move/apply', {code: $('#clCode').value, ids}); showResults('Umzug in die Cloud', r.results); $('#clRunBox').hidden = true; load(); }
   catch (e) { $('#clMsg').textContent = '❌ ' + e.message; }
+};
+
+// --- Router ---
+let routerData = null;
+const rQuery = () => typeof sq === 'function' ? sq() : '';
+const rScopeOk = () => typeof centralSite !== 'function' || (scope() !== null && centralSite() !== null);
+const rDevs = () => (data.devices || []).filter(d => major(d.version) === '7' && !d.cloudUrl && (typeof centralSite !== 'function' || (inScope(d) && (d.site || '') === (centralSite() || ''))))
+  .sort((a, b) => (a.identity || '').localeCompare(b.identity || ''));
+async function loadRouter(dev) {
+  if (!rScopeOk()) { $('#rScope').textContent = 'Bitte oben einen Kunden und Standort wählen.'; $('#rPortsCard').hidden = $('#rNetsCard').hidden = true; return; }
+  $('#rScope').textContent = '';
+  $('#rtMsg').textContent = 'lese Gerät aus …';
+  try {
+    const q = rQuery(), u = '/api/router' + q + (dev ? (q ? '&' : '?') + 'device=' + encodeURIComponent(dev) : '');
+    const r = await fetch(u, {cache: 'no-store'});
+    if (!r.ok) throw new Error(await r.text());
+    routerData = await r.json();
+    $('#rtMsg').textContent = routerData.error ? '❌ ' + routerData.error : '';
+  } catch (e) { $('#rtMsg').textContent = '❌ ' + e.message; return; }
+  renderRouter();
+}
+function rPortRow(x, lte) {
+  const role = x.role || 'access', type = x.type || (lte ? 'wwan' : 'dhcp'), wan = role === 'wan' || role === 'backup';
+  const roles = (lte ? [['off', 'Aus'], ['wan', 'WAN'], ['backup', 'Backup WAN']] : [['access', 'Access'], ['wan', 'WAN'], ['backup', 'Backup WAN'], ['off', 'Aus']]);
+  const types = lte ? [['wwan', 'WWAN']] : [['dhcp', 'DHCPoE'], ['ipoe', 'IPoE'], ['pppoe', 'PPPoE']];
+  const f = (k, label, v, attr) => `<div><label style="margin:0">${label}</label><input data-r="${k}" value="${esc(v || '')}" autocomplete="off" ${attr || ''}></div>`;
+  let more = '';
+  if (wan && type === 'ipoe') more = f('address', 'IP-Adresse', x.address) + f('mask', 'Netzmaske', x.mask) + f('gateway', 'Gateway', x.gateway) + f('dns', 'DNS', x.dns);
+  if (wan && type === 'pppoe') more = f('user', 'Benutzername', x.user) + f('secret', 'Passwort' + (x.secretSet ? ' (hinterlegt, leer = behalten)' : ''), '', 'type="password"');
+  if (wan && type === 'wwan') more = f('secret', 'PIN' + (x.secretSet ? ' (hinterlegt, leer = behalten)' : ' (leer = keine)'), '', 'type="password" inputmode="numeric" maxlength="8"') + f('apn', 'APN (leer = automatisch)', x.apn);
+  return `<tr data-port="${esc(x.name)}" data-lte="${lte ? '1' : ''}"><td><b>${esc(x.name)}</b></td>
+    <td><select data-r="role" title="Aufgabe dieses Ports.">${roles.map(([v, l]) => opt(v, role, l)).join('')}</select></td>
+    <td><select data-r="type" ${wan ? '' : 'disabled'} title="Art der Internetverbindung. Bei Access ohne Bedeutung.">${types.map(([v, l]) => opt(v, type, l)).join('')}</select></td>
+    <td><input data-r="vlan" value="${esc(x.vlan || '')}" ${role === 'off' || lte ? 'disabled' : ''} placeholder="${wan ? 'kein VLAN' : 'alle'}" style="width:110px" title="Dezimal, mehrere mit Komma."></td></tr>
+    ${more ? `<tr data-more="${esc(x.name)}"><td></td><td colspan="3"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px">${more}</div></td></tr>` : ''}`;
+}
+function rNetRow(n, i) {
+  const d = !n.dhcp ? 'disabled' : '';
+  return `<tr data-net="${i}"><td><input data-n="address" value="${esc(n.address || '')}" placeholder="192.168.10.1/24"></td>
+    <td><input data-n="vlan" value="${i === 0 ? 1 : esc(n.vlan || '')}" ${i === 0 ? 'disabled title="Das Standard-LAN ist VLAN 1."' : ''} style="width:70px"></td>
+    <td><input data-n="dhcp" type="checkbox" ${n.dhcp ? 'checked' : ''} style="width:auto" title="Haken = der Router verteilt hier Adressen."></td>
+    <td><input data-n="first" value="${esc(n.first || '')}" ${d}></td><td><input data-n="last" value="${esc(n.last || '')}" ${d}></td><td><input data-n="dns" value="${esc(n.dns || '')}" ${d} placeholder="Router"></td>
+    <td>${i === 0 ? '' : '<button class="small" type="button" data-ndel title="Entfernt dieses Netzwerk aus der Liste.">×</button>'} <button class="small" type="button" data-nadd title="Fügt ein weiteres Netzwerk hinzu.">+</button></td></tr>`;
+}
+function renderRouter() {
+  const r = routerData; if (!r) return;
+  const devs = rDevs(), cur = r.cfg.device || '';
+  $('#rDev').innerHTML = opt('', cur, '– kein Router –') + devs.map(d => opt(d.id, cur, `${d.identity} (${d.model || d.board || ''})`)).join('');
+  const sel = $('#rDev').value;
+  $('#rPortsCard').hidden = $('#rNetsCard').hidden = !sel;
+  if (!sel) return;
+  const saved = {}; for (const p of r.cfg.ports || []) saved[p.name] = p;
+  $('#rPorts').innerHTML = (r.ports || []).map(p => rPortRow(saved[p.name] || {name: p.name, role: p.lte ? 'off' : 'access'}, p.lte)).join('');
+  $('#rNets').innerHTML = (r.cfg.nets || []).map(rNetRow).join('');
+}
+function collectRouter() {
+  const ports = [...document.querySelectorAll('#rPorts tr[data-port]')].map(tr => {
+    const name = tr.dataset.port, x = {name}, more = document.querySelector(`#rPorts tr[data-more="${CSS.escape(name)}"]`);
+    for (const e of tr.querySelectorAll('[data-r]')) x[e.dataset.r] = e.value.trim();
+    if (more) for (const e of more.querySelectorAll('[data-r]')) x[e.dataset.r] = e.value.trim();
+    const old = ((routerData.cfg.ports || []).find(p => p.name === name) || {});
+    if (x.role !== 'access' && x.role !== 'off') for (const k of ['address', 'mask', 'gateway', 'dns', 'user', 'apn']) if (x[k] === undefined) x[k] = old[k] || '';
+    x.secretSet = !!old.secretSet;
+    return x;
+  });
+  const nets = [...document.querySelectorAll('#rNets tr[data-net]')].map((tr, i) => {
+    const g = k => tr.querySelector(`[data-n="${k}"]`);
+    return {address: g('address').value.trim(), vlan: i === 0 ? 1 : parseInt(g('vlan').value, 10) || 0, dhcp: g('dhcp').checked, first: g('first').value.trim(), last: g('last').value.trim(), dns: g('dns').value.trim()};
+  });
+  return {device: $('#rDev').value, ports, nets};
+}
+function rRedraw() { const c = collectRouter(); routerData.cfg = Object.assign({}, routerData.cfg, c, {ports: c.ports.map(p => Object.assign({}, (routerData.cfg.ports || []).find(o => o.name === p.name), p))}); renderRouter(); }
+async function saveRouter() {
+  routerData.cfg = await api('POST', '/api/router' + rQuery(), collectRouter());
+  load();
+}
+$('#rDev').onchange = () => { $('#rPlan').hidden = true; loadRouter($('#rDev').value || undefined); };
+$('#rPorts').addEventListener('change', e => { if (e.target.dataset.r === 'role' || e.target.dataset.r === 'type') rRedraw(); });
+$('#rNets').addEventListener('change', e => { if (e.target.dataset.n === 'dhcp') rRedraw(); });
+$('#rNets').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const c = collectRouter();
+  if ('nadd' in b.dataset) c.nets.push({address: '', vlan: '', dhcp: false});
+  if ('ndel' in b.dataset) c.nets.splice(parseInt(b.closest('tr').dataset.net, 10), 1);
+  routerData.cfg.nets = c.nets; renderRouter();
+});
+$('#rSave').onclick = async () => {
+  try { await saveRouter(); renderRouter(); $('#rtMsg').textContent = '✅ gespeichert'; } catch (e) { $('#rtMsg').textContent = '❌ ' + e.message; }
+};
+$('#rPrev').onclick = async () => {
+  try { await saveRouter(); renderRouter(); } catch (e) { $('#rtMsg').textContent = '❌ ' + e.message; return; }
+  $('#rtMsg').textContent = '';
+  const d = (data.devices || []).find(x => x.id === $('#rDev').value); if (!d) return;
+  previewChange($('#rPlan'), {close() { $('#rPlan').hidden = true; }}, d, 'Router-Konfiguration', {action: 'router'});
 };
 
 // --- Automatische Updates ---

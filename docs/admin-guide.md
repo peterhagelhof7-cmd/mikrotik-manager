@@ -319,6 +319,28 @@ Schreiben wieder frei. Das ändert nichts am Gerät, der Tunnel bleibt stehen.
 
 Die Cloud muss den eigenen Benutzer schon kennen; eine ältere Cloud lehnt dieser Manager beim Prüfen ab.
 
+### Router
+
+Tab **Router** (lokal für das ganze Netz, in der Cloud je Standort): Hier wählst du das Gerät, das Router
+ist. Es bekommt die Badge **router**. Je Port stellst du Rolle, Typ und VLAN ein:
+
+- **WAN:** primärer Internetzugang, genau einer. **Backup WAN:** höchstens einer. Bleiben über das WAN
+  60 Sekunden lang die Prüfadressen stumm, übernimmt es; nach 60 stabilen Sekunden geht es zurück.
+- **Typ:** IPoE (IP, Maske, Gateway, DNS), DHCPoE, PPPoE (Benutzer, Passwort), WWAN (nur LTE, PIN, APN).
+- **Access:** Hier hängen Switches und Access Points. **Aus:** Port abgeschaltet.
+- **VLAN am Access-Port:** leer = VLAN 1 ungetaggt, alle anderen getaggt. Ein Wert = nur dieses ungetaggt.
+  Mehrere = nur diese getaggt, VLAN 1 darin ungetaggt.
+- **VLAN am WAN:** Die Verbindung läuft darüber, das VLAN ist sonst überall gesperrt.
+
+Unter **Netzwerke** ist die erste Zeile das Standard-LAN (VLAN 1), weitere kommen mit **+** dazu. Netzwerke
+sind untereinander gesperrt und dürfen ins Internet; nur das Standard-LAN darf in die anderen. Von außen ist
+alles zu, verwalten lässt sich der Router nur aus dem Standard-LAN und über den Tunnel.
+
+**Ausrollen ersetzt die Router-Konfiguration ganz.** Vorher entsteht ein Backup, und kommt der Manager nicht
+mehr aufs Gerät, stellt es nach 5 Minuten den alten Zustand wieder her. Geräte hinter dem Router behalten
+ihre alte Adresse, bis ihre DHCP-Lease erneuert wird. Nicht enthalten: Portweiterleitung, feste
+DHCP-Zuweisungen, IPv6, VPN-Einwahl, Lastverteilung.
+
 ## 6. WLAN
 
 ### 6.1 WLAN-Dialog eines Geräts (Knopf „WLAN“)

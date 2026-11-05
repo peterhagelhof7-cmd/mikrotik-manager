@@ -142,6 +142,8 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 	mux.Handle("GET /api/wwan/usage.csv", w.auth(http.HandlerFunc(w.allWwanCSV)))
 	mux.Handle("GET /api/topology", w.auth(http.HandlerFunc(w.topology)))
 	mux.Handle("POST /api/topology/root", w.auth(http.HandlerFunc(w.setTopoRoot)))
+	mux.Handle("GET /api/router", w.auth(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { w.routerGet(rw, r, "") })))
+	mux.Handle("POST /api/router", w.auth(w.rec("Router-Konfiguration gespeichert", http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { w.routerSave(rw, r, "") }))))
 	mux.Handle("POST /api/cloud-move/preview", w.auth(http.HandlerFunc(w.cloudPreview)))
 	mux.Handle("POST /api/cloud-move/apply", w.auth(w.rec("Umzug in die Cloud gestartet", http.HandlerFunc(w.cloudApply))))
 	mux.Handle("POST /api/devices/{id}/cloud-release", w.auth(w.rec("Verwaltung aus der Cloud zurückgeholt", http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
@@ -329,6 +331,37 @@ func (w *web) wlanBulkApply(rw http.ResponseWriter, r *http.Request) {
 	writeJSON(rw, map[string]any{"results": w.pl.StartChange(b.IDs, ChangeReq{Action: "wlan", WLAN: []WlanEdit{b.Edit}})})
 }
 
+func (w *web) routerGet(rw http.ResponseWriter, r *http.Request, key string) {
+	c := w.pl.Router(key)
+	dev := r.URL.Query().Get("device")
+	if dev != "" {
+		c.Device = dev
+	}
+	out := map[string]any{"cfg": c}
+	if c.Device != "" {
+		ports, err := w.pl.RouterPorts(r.Context(), c.Device)
+		out["ports"] = ports
+		if err != nil {
+			out["error"] = err.Error()
+		}
+	}
+	writeJSON(rw, out)
+}
+
+func (w *web) routerSave(rw http.ResponseWriter, r *http.Request, key string) {
+	var c RouterCfg
+	if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 65536)).Decode(&c); err != nil {
+		http.Error(rw, "ungültige Anfrage", http.StatusBadRequest)
+		return
+	}
+	out, err := w.pl.SaveRouter(key, c)
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(rw, out)
+}
+
 // readCloud liest {"code": …, "ids": […]} und prüft den Code bei der Cloud.
 func (w *web) readCloud(rw http.ResponseWriter, r *http.Request) (cloudCode, []string, bool) {
 	var req struct {
@@ -460,6 +493,7 @@ func (w *web) devices(rw http.ResponseWriter, r *http.Request) {
 		HasOwnCred bool      `json:"hasOwnCred"`
 		Job        *Job      `json:"job,omitempty"`
 		Backups    int       `json:"backups"`
+		Router     bool      `json:"router,omitempty"`
 		LastBackup time.Time `json:"lastBackup,omitempty"`
 		// WLAN-Clients (jede Minute gelesen); nil = noch nicht gelesen
 		Clients   []WlanClient `json:"wlanClients"`
@@ -472,7 +506,7 @@ func (w *web) devices(rw http.ResponseWriter, r *http.Request) {
 	}
 	var out []row
 	for _, d := range w.st.List() {
-		x := row{Device: d, HasOwnCred: w.vault.Has("dev:" + d.ID), HostKeyChanged: w.pl.hostKeys.Changed(d.ID)}
+		x := row{Router: w.pl.IsRouter(d), Device: d, HasOwnCred: w.vault.Has("dev:" + d.ID), HostKeyChanged: w.pl.hostKeys.Changed(d.ID)}
 		if bl := w.pl.ListBackups(d.ID); len(bl) > 0 {
 			x.Backups, x.LastBackup = len(bl), bl[0].Time
 		}
