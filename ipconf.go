@@ -273,7 +273,8 @@ func ipRestore(undo *strings.Builder, st ipState, statics, routes []map[string]s
 		if a["comment"] != "" {
 			cmd += " comment=" + q(a["comment"])
 		}
-		undo.WriteString(try(cmd))
+		// Der Rückweg läuft auch, wenn das Apply-Skript vorher abbrach: Dann ist noch alles da.
+		undo.WriteString(":if ([:len [/ip address find address=" + q(a["address"]) + " interface=" + q(st.Iface) + "]] = 0) do={\n" + try(cmd) + "}\n")
 	}
 	for _, r := range routes {
 		cmd := "/ip route add dst-address=0.0.0.0/0 gateway=" + q(r["gateway"])
@@ -283,7 +284,7 @@ func ipRestore(undo *strings.Builder, st ipState, statics, routes []map[string]s
 		if r["comment"] != "" {
 			cmd += " comment=" + q(r["comment"])
 		}
-		undo.WriteString(try(cmd))
+		undo.WriteString(":if ([:len [/ip route find dst-address=0.0.0.0/0 gateway=" + q(r["gateway"]) + " dynamic=no]] = 0) do={\n" + try(cmd) + "}\n")
 	}
 }
 
@@ -390,6 +391,13 @@ func buildIPDhcpPlan(st ipState) Plan {
 		return p
 	}
 	var apply, undo strings.Builder
+	// Zuerst: Der Zeitplan schaltet den Client wieder aus, solange das Gateway antwortet.
+	if st.FallbackSrc != "" {
+		p.Steps = append(p.Steps, "Rückfall-Zeitplan entfernen")
+		apply.WriteString(":do {\n" + ipFallbackRemove() + "} on-error={}\n")
+		undo.WriteString(try(strings.ReplaceAll(strings.TrimSpace(ipFallbackRemove()), "\n", "; ")))
+		undo.WriteString(try(strings.ReplaceAll(strings.TrimSpace(ipFallbackAdd(st.FallbackSrc)), "\n", "; ")))
+	}
 	dc := "[find interface=" + q(st.Iface) + "]"
 	switch {
 	case st.DHCP == nil:
@@ -414,11 +422,6 @@ func buildIPDhcpPlan(st ipState) Plan {
 		apply.WriteString("/ip route remove numbers=" + x[".id"] + "\n")
 	}
 	ipRestore(&undo, st, st.Statics, st.Routes)
-	if st.FallbackSrc != "" {
-		p.Steps = append(p.Steps, "Rückfall-Zeitplan entfernen")
-		apply.WriteString(":do {\n" + ipFallbackRemove() + "} on-error={}\n")
-		undo.WriteString(try(strings.ReplaceAll(strings.TrimSpace(ipFallbackAdd(st.FallbackSrc)), "\n", "; ")))
-	}
 	if st.CurOnIface && len(st.Statics) > 0 {
 		p.NewIP = true
 		p.Warn = append(p.Warn, "Das Gerät bekommt seine IP vom DHCP-Server. Der Manager findet es danach per MNDP wieder.")

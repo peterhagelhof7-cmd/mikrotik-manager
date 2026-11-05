@@ -199,6 +199,15 @@ func TestIPBackToDHCP(t *testing.T) {
 	if !p.NewIP || p.Bridge != "bridge" {
 		t.Fatalf("%+v", p)
 	}
+	// Der Zeitplan schaltet den Client sonst wieder aus, solange das Gateway antwortet.
+	if a, b := strings.Index(p.Apply, "scheduler remove"), strings.Index(p.Apply, "dhcp-client enable"); a < 0 || a > b {
+		t.Fatal(p.Apply)
+	}
+	// Bricht das Skript vorher ab, darf der Rückweg nichts doppelt anlegen.
+	if !strings.Contains(p.Undo, `:if ([:len [/ip route find dst-address=0.0.0.0/0 gateway="192.168.1.1" dynamic=no]] = 0) do={`) ||
+		!strings.Contains(p.Undo, `:if ([:len [/ip address find address="192.168.1.20/24" interface="bridge"]] = 0) do={`) {
+		t.Fatal(p.Undo)
+	}
 	// Erst Lease, dann entfernen: ohne Lease bleibt die feste IP.
 	if a, b := strings.Index(p.Apply, "kein DHCP-Lease"), strings.Index(p.Apply, "/ip address remove"); a < 0 || a > b {
 		t.Fatal(p.Apply)
