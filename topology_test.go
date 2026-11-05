@@ -147,6 +147,87 @@ func TestTopologyRootAndErrors(t *testing.T) {
 	}
 }
 
+// Echter Stand 11-05: Router R (sfp1) → CRS328 C (sfp4 oben) → CRS112 K (ether1 oben,
+// ether4) → wAP W; dazu cAP P an C:ether8. MNDP läuft durch die Bridges: Jedes Gerät
+// meldet alle anderen als Nachbarn, nur der Port verrät die Richtung.
+func chainSite() []topoRaw {
+	const R, C, K, W, P = "RR:01", "CC:01", "KK:01", "WW:01", "PP:01"
+	port := func(names ...string) []map[string]string {
+		var out []map[string]string
+		for _, n := range names {
+			out = append(out, map[string]string{"name": n, "type": "ether", "running": "true"})
+		}
+		return out
+	}
+	dev := func(id, mac string, ports []map[string]string, m map[string]string) topoRaw {
+		r := topoRaw{ID: id, Identity: id, OwnMACs: []string{mac}, Ports: ports}
+		for other, p := range m {
+			r.Hosts = append(r.Hosts, map[string]string{"mac-address": other, "on-interface": p})
+			r.Neighbors = append(r.Neighbors, map[string]string{"mac-address": other, "interface": p + ",bridge"})
+		}
+		return r
+	}
+	return []topoRaw{
+		dev("R", R, port("ether1", "sfp1"), map[string]string{C: "sfp1", K: "sfp1", W: "sfp1", P: "sfp1"}),
+		dev("C", C, port("ether1", "ether8", "sfp4"), map[string]string{R: "sfp4", K: "ether1", W: "ether1", P: "ether8"}),
+		dev("K", K, port("ether1", "ether4"), map[string]string{R: "ether1", C: "ether1", P: "ether1", W: "ether4"}),
+		dev("W", W, port("ether1", "ether2"), map[string]string{R: "ether1", C: "ether1", K: "ether1", P: "ether1"}),
+		dev("P", P, port("ether1", "ether2"), map[string]string{R: "ether1", C: "ether1", K: "ether1", W: "ether1"}),
+	}
+}
+
+// topoShape schreibt den Baum als „Gerät[Uplink] Port>(Kind) …“.
+func topoShape(n *TopoNode) string {
+	s := n.ID + "[" + n.Uplink + "]"
+	for _, p := range n.Ports {
+		for _, c := range p.Children {
+			s += " " + p.Name + ">(" + topoShape(c) + ")"
+		}
+	}
+	return s
+}
+
+func TestTopologyNeighborsThroughBridges(t *testing.T) {
+	want := map[string]string{
+		"R": "R[] sfp1>(C[sfp4] ether1>(K[ether1] ether4>(W[ether1])) ether8>(P[ether1]))",
+		"C": "C[] ether1>(K[ether1] ether4>(W[ether1])) ether8>(P[ether1]) sfp4>(R[sfp1])",
+		"K": "K[] ether1>(C[ether1] ether8>(P[ether1]) sfp4>(R[sfp1])) ether4>(W[ether1])",
+	}
+	for root, w := range want {
+		if got := topoShape(BuildTopology(chainSite(), root).Root); got != w {
+			t.Errorf("Wurzel %s:\n %s\nerwartet\n %s", root, got, w)
+		}
+	}
+	// Ohne MAC-Tabelle bleibt der Nachbar: Sein Port zeigt dieselbe Richtung.
+	raws := chainSite()
+	for i := range raws {
+		raws[i].Hosts = nil
+	}
+	if got := topoShape(BuildTopology(raws, "R").Root); got != want["R"] {
+		t.Errorf("nur Nachbarn: %s", got)
+	}
+}
+
+func TestManagedTreeOddData(t *testing.T) {
+	ok := []*topoRaw{{ID: "R"}, {ID: "X"}, {ID: "Y"}, {ID: "Z"}, {ID: "L"}}
+	// X und Y sehen einander „unten“ (Schleife), Z sieht die Wurzel nicht.
+	parent, port, _ := managedTree(ok, "R", map[string]map[string]string{
+		"R": {"X": "e1", "Y": "e2", "Z": "e3"},
+		"X": {"R": "e1", "Y": "e2"},
+		"Y": {"R": "e1", "X": "e2"},
+		"Z": {"L": "e2"},
+	})
+	if parent["X"] != "R" || parent["Y"] != "X" || port["X"] != "e1" || port["Y"] != "e2" { // Kreis aufgebrochen
+		t.Fatalf("Schleife: %v %v", parent, port)
+	}
+	if parent["Z"] != "R" {
+		t.Fatalf("Z: %v", parent)
+	}
+	if _, in := parent["L"]; in {
+		t.Fatalf("Z kennt die Richtung nicht und darf L nicht aufnehmen: %v", parent)
+	}
+}
+
 // Fremd-Router oben (nicht verwaltet, Gateway 192.168.1.1 = GW): daran Switch S (ether1)
 // mit AP A an S:ether2, AP B direkt am Router, PC9 direkt am Router.
 func foreignSite(withGateway bool) []topoRaw {

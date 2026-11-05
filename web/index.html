@@ -25,6 +25,7 @@ input[type=search]{flex:1;min-width:180px}
 button{cursor:pointer;border:0;background:var(--nav);color:var(--link)}
 button.primary{background:var(--acc);color:#fff}
 button.small{padding:3px 9px;font-size:12px}
+button:disabled{opacity:.45;filter:grayscale(1);cursor:not-allowed}
 .wrap{overflow-x:auto;background:var(--card);border-radius:12px;padding:4px 8px}
 table{border-collapse:collapse;width:100%;white-space:nowrap}
 th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
@@ -385,14 +386,16 @@ function row(d) {
     <td>${uptime(d.uptime)}</td>
     <td title="${esc(d.apiError)}">${st}${credTag}${d.apiError ? `<div class="hint">${esc(d.apiError)}</div>` : ''}${d.hostKeyChanged ? `<div><span class="badge b-bad" title="Das Gerät meldet sich per SSH mit einem anderen Schlüssel als beim ersten Kontakt (${esc(d.hostKeyChanged)}). Backups, Updates und Rollback sind deshalb gesperrt.">SSH-Schlüssel geändert</span> <button class="small" data-hostkey="${esc(d.id)}" title="Nach Rückfrage: übernimmt genau diesen neuen SSH-Schlüssel des Geräts. Nur wählen, wenn das Gerät neu aufgesetzt wurde (Netinstall, Werksreset). Ändert nichts auf dem Gerät.">SSH-Schlüssel übernehmen</button></div>` : ''}</td>
     <td>${jobCell(d)}</td>
-    <td><button class="small" data-upd="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Nach Rückfrage: speichert ein Backup auf dem Manager, installiert eine neuere RouterOS-Version (falls vorhanden) und danach die RouterBOARD-Firmware. Das Gerät startet dabei ein- bis zweimal neu (je ca. 1–2 Minuten offline).">Update</button> <button class="small" data-reboot="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Nach Rückfrage: startet das Gerät neu (ca. 1–2 Minuten offline) und prüft, dass es wieder erreichbar ist.">Neustart</button>
+    <td><button class="small" data-upd="${esc(d.id)}" ${lock(d)} title="Nach Rückfrage: speichert ein Backup auf dem Manager, installiert eine neuere RouterOS-Version (falls vorhanden) und danach die RouterBOARD-Firmware. Das Gerät startet dabei ein- bis zweimal neu (je ca. 1–2 Minuten offline).">Update</button> <button class="small" data-reboot="${esc(d.id)}" ${lock(d)} title="Nach Rückfrage: startet das Gerät neu (ca. 1–2 Minuten offline) und prüft, dass es wieder erreichbar ist.">Neustart</button>
       <button class="small" data-cred="${esc(d.id)}" title="Öffnet einen Dialog für eigene Zugangsdaten nur dieses Geräts. Ändert nichts auf dem Gerät.">Login</button> <button class="small" data-poll="${esc(d.id)}" title="Liest das Gerät sofort neu aus (Version, Firmware, Status). Ändert nichts auf dem Gerät.">↻</button>
-      <div style="margin-top:4px"><button class="small" data-set="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Öffnet die Einstellungen: Name setzen, alle Ports in die Bridge, DHCP-Client auf der Bridge (WLAN: eigener Knopf). Ändert erst nach Vorschau und ausdrücklichem Klick auf „Jetzt ausführen“.">Einstellungen</button> ${(d.wirelessPkg || axBoard(d)) ? `<button class="small" data-wlan="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Öffnet die WLAN-Übersicht dieses Geräts: SSID, Passwort und an/aus je Schnittstelle ändern; bei altem wireless-Paket zusätzlich die Umstellung auf das neue wifi-Paket. Ändert erst nach Vorschau und Klick auf „Jetzt ausführen“.">WLAN</button> ` : ''}<button class="small" data-backup="${esc(d.id)}" ${d.job && d.job.running ? 'disabled' : ''} title="Erstellt sofort ein Backup (Binär-Backup + Text-Export) und speichert es auf dem Manager. Die Kopie auf dem Gerät wird danach gelöscht. Kein Neustart, keine Änderung der Konfiguration.">Backup</button>
+      <div style="margin-top:4px"><button class="small" data-set="${esc(d.id)}" ${lock(d)} title="Öffnet die Einstellungen: Name setzen, alle Ports in die Bridge, DHCP-Client auf der Bridge (WLAN: eigener Knopf). Ändert erst nach Vorschau und ausdrücklichem Klick auf „Jetzt ausführen“.">Einstellungen</button> ${(d.wirelessPkg || axBoard(d)) ? `<button class="small" data-wlan="${esc(d.id)}" ${lock(d)} title="Öffnet die WLAN-Übersicht dieses Geräts: SSID, Passwort und an/aus je Schnittstelle ändern; bei altem wireless-Paket zusätzlich die Umstellung auf das neue wifi-Paket. Ändert erst nach Vorschau und Klick auf „Jetzt ausführen“.">WLAN</button> ` : ''}<button class="small" data-backup="${esc(d.id)}" ${d.job && d.job.running ? 'disabled' : ''} title="Erstellt sofort ein Backup (Binär-Backup + Text-Export) und speichert es auf dem Manager. Die Kopie auf dem Gerät wird danach gelöscht. Kein Neustart, keine Änderung der Konfiguration.">Backup</button>
       ${d.backups ? `<button class="small" data-blist="${esc(d.id)}" title="Zeigt die auf dem Manager gespeicherten Backups dieses Geräts zum Herunterladen.">${d.backups} Dateien · ${esc(ago(d.lastBackup))}</button>` : '<span class="hint">kein Backup</span>'}</div></td>
   </tr>`;
 }
 
 const busy = d => (d.job && d.job.running) || d.cloudUrl;
+// Vor dem title-Attribut einsetzen: Bei doppelten Attributen gilt das erste, die Sperre erklärt sich so selbst.
+const lock = d => d.cloudUrl ? 'disabled title="Wird von der Cloud verwaltet, hier nur lesen und sichern."' : busy(d) ? 'disabled' : '';
 const MIG_HINT = 'Ersetzt das alte Paket wireless durch wifi-qcom-ac (nur für neuere Funkchips, z. B. cAP ac, hAP ac²) und übernimmt SSIDs, Passwörter, Schalter an/aus und die Bridge-Zuordnung. Zwei Neustarts, das WLAN dieses Geräts ist ca. 5 Minuten aus.';
 // Geräte ohne Treiber im wireless-Paket (wifi-qcom, wifi-mediatek) – wie axWifiPkg in migrate.go
 const axBoard = d => {
@@ -625,7 +628,7 @@ function renderCentral(c) {
   $('#cEnabled').checked = !!c.enabled;
   $('#cUpdated').textContent = c.updated && !c.updated.startsWith('0001') ? 'zuletzt gespeichert: ' + new Date(c.updated).toLocaleString('de-DE') : 'noch nicht gespeichert – die Werte unten sind die Empfehlung';
   const devs = wlanDevs();
-  $('#cDevices').innerHTML = devs.map(d => `<label style="display:flex;gap:8px;align-items:center;color:var(--fg);margin:4px 0"><input type="checkbox" data-dev="${esc(d.id)}" ${(c.devices || []).includes(d.id) ? 'checked' : ''} style="width:auto" title="Haken = dieses Gerät wird zentral verwaltet und beim Ausrollen neu konfiguriert.">
+  $('#cDevices').innerHTML = devs.map(d => `<label style="display:flex;gap:8px;align-items:center;color:var(--fg);margin:4px 0"><input type="checkbox" data-dev="${esc(d.id)}" ${(c.devices || []).includes(d.id) ? 'checked' : ''} ${d.cloudUrl ? lock(d) : ''} style="width:auto" title="Haken = dieses Gerät wird zentral verwaltet und beim Ausrollen neu konfiguriert.">
     <b>${esc(d.identity)}</b> <span class="mute">${esc(d.model || d.board)} · ${esc(d.ip)}</span>${d.wirelessPkg === 'wireless' ? ' <span class="badge b-warn" title="Altes wireless-Paket: kein WPA3, bekommt WPA2.">wireless – nur WPA2</span>' : ''}</label>`).join('') || 'keine Geräte mit WLAN';
   $('#cNets').innerHTML = (c.networks || []).map(netRow).join('');
   $('#cRadio').innerHTML = centralRadioRow('radio2', '2,4 GHz', c.radio2, false) + centralRadioRow('radio5', '5 GHz', c.radio5, true);
@@ -778,7 +781,7 @@ function renderAuto(a, keepForm) {
   if (!keepForm) {
     $('#auEnabled').checked = a.enabled; $('#auTime').value = a.time; $('#auFirmware').checked = a.firmware;
     $('#auDays').innerHTML = DAYS.map(([d, l]) => `<label style="display:flex;gap:4px;align-items:center;margin:0;color:var(--fg)"><input type="checkbox" data-day="${d}" ${(a.days || []).includes(d) ? 'checked' : ''} style="width:auto" title="Updates am ${l} ausführen.">${l}</label>`).join('');
-    $('#auDevices').innerHTML = (data.devices || []).slice().sort((x, y) => (x.identity || '').localeCompare(y.identity || '')).map(d => `<label style="display:flex;gap:8px;align-items:center;color:var(--fg);margin:4px 0"><input type="checkbox" data-adev="${esc(d.id)}" ${(a.devices || []).includes(d.id) ? 'checked' : ''} style="width:auto" title="Haken = dieses Gerät wird automatisch aktualisiert. Ist kein Gerät gewählt, gilt es für alle."><b>${esc(d.identity)}</b> <span class="mute">${esc(d.model || d.board)} · ${esc(d.ip)}</span></label>`).join('');
+    $('#auDevices').innerHTML = (data.devices || []).slice().sort((x, y) => (x.identity || '').localeCompare(y.identity || '')).map(d => `<label style="display:flex;gap:8px;align-items:center;color:var(--fg);margin:4px 0"><input type="checkbox" data-adev="${esc(d.id)}" ${(a.devices || []).includes(d.id) ? 'checked' : ''} ${d.cloudUrl ? lock(d) : ''} style="width:auto" title="Haken = dieses Gerät wird automatisch aktualisiert. Ist kein Gerät gewählt, gilt es für alle."><b>${esc(d.identity)}</b> <span class="mute">${esc(d.model || d.board)} · ${esc(d.ip)}</span></label>`).join('');
   }
   const next = a.next && !a.next.startsWith('0001') ? new Date(a.next).toLocaleString('de-DE', {weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'}) : null;
   $('#auMsg').textContent = a.running ? 'Update-Lauf aktiv – Fortschritt oben in der Statusleiste' : a.enabled ? `nächster Lauf: ${next || '–'}` : 'nicht aktiviert';
@@ -1055,7 +1058,7 @@ Das Gerät startet dabei ein- bis zweimal neu.`)) return;
     const base = `/api/devices/${encodeURIComponent(d.id)}/backups`;
     const list = await (await fetch(base, {cache: 'no-store'})).json();
     $('#bTitle').textContent = `Backups von ${d.identity}`;
-    $('#bBody').innerHTML = (list || []).map(f => `<div><a href="${base}/${encodeURIComponent(f.name)}" title="Lädt die Datei herunter.">${esc(f.name)}</a> <span class="mute">${(f.size / 1024).toFixed(1)} KB · ${new Date(f.time).toLocaleString('de-DE')}</span>${f.name.endsWith('.backup') ? ` <button class="small" data-restore="${esc(f.name)}" ${busy(d) ? 'disabled' : ''} title="Nach Prüfung und Rückfrage: sichert den aktuellen Stand als „vor-rollback“ auf den Manager, spielt dieses Backup auf das Gerät ein und wartet, bis es nach dem Neustart wieder erreichbar ist (ca. 1–2 Minuten offline).">Zurückspielen</button>` : ''}</div>`).join('') || '<span class="mute">keine</span>';
+    $('#bBody').innerHTML = (list || []).map(f => `<div><a href="${base}/${encodeURIComponent(f.name)}" title="Lädt die Datei herunter.">${esc(f.name)}</a> <span class="mute">${(f.size / 1024).toFixed(1)} KB · ${new Date(f.time).toLocaleString('de-DE')}</span>${f.name.endsWith('.backup') ? ` <button class="small" data-restore="${esc(f.name)}" ${lock(d)} title="Nach Prüfung und Rückfrage: sichert den aktuellen Stand als „vor-rollback“ auf den Manager, spielt dieses Backup auf das Gerät ein und wartet, bis es nach dem Neustart wieder erreichbar ist (ca. 1–2 Minuten offline).">Zurückspielen</button>` : ''}</div>`).join('') || '<span class="mute">keine</span>';
     $('#bBody').dataset.dev = d.id;
     $('#bDlg').showModal();
   }
@@ -1096,7 +1099,7 @@ $('#bBody').addEventListener('click', async e => {
 });
 
 $('#snmpAll').onclick = async () => {
-  const devs = (data.devices || []).filter(d => d.apiStatus === 'ok');
+  const devs = (data.devices || []).filter(d => d.apiStatus === 'ok' && !d.cloudUrl);
   if (!devs.length) { flash('Kein erreichbares Gerät'); return; }
   if (!confirm(`SNMP v2c (Community public, nur lesend) auf ${devs.length} Gerät(en) einschalten?`)) return;
   const res = [];
@@ -1213,11 +1216,11 @@ function renderDetail() {
       <button class="small" data-dx="loc" title="Speichert den Standort-Text auf dem Manager. Ändert nichts am Gerät.">Standort speichern</button></div>
     <h3 style="margin-top:16px">Einstellungen &amp; Aktionen</h3>
     <div class="btns" style="justify-content:flex-start;flex-wrap:wrap">
-      <button class="small" data-set="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Name setzen, alle Ports in die Bridge, DHCP-Client – erst Vorschau, dann ausführen.">Einstellungen</button>
-      ${(d.wirelessPkg || axBoard(d)) ? `<button class="small" data-wlan="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="WLAN dieses Geräts ansehen und ändern (mit Vorschau).">WLAN</button>` : ''}
+      <button class="small" data-set="${esc(d.id)}" ${lock(d)} title="Name setzen, alle Ports in die Bridge, DHCP-Client – erst Vorschau, dann ausführen.">Einstellungen</button>
+      ${(d.wirelessPkg || axBoard(d)) ? `<button class="small" data-wlan="${esc(d.id)}" ${lock(d)} title="WLAN dieses Geräts ansehen und ändern (mit Vorschau).">WLAN</button>` : ''}
       <button class="small" data-cred="${esc(d.id)}" title="Eigene Zugangsdaten nur für dieses Gerät. Ändert nichts auf dem Gerät.">Login</button>
-      <button class="small" data-upd="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Nach Rückfrage: Backup, dann RouterOS und Firmware aktualisieren (1–2 Neustarts).">Update</button>
-      <button class="small" data-reboot="${esc(d.id)}" ${busy(d) ? 'disabled' : ''} title="Nach Rückfrage: Gerät neu starten.">Neustart</button>
+      <button class="small" data-upd="${esc(d.id)}" ${lock(d)} title="Nach Rückfrage: Backup, dann RouterOS und Firmware aktualisieren (1–2 Neustarts).">Update</button>
+      <button class="small" data-reboot="${esc(d.id)}" ${lock(d)} title="Nach Rückfrage: Gerät neu starten.">Neustart</button>
       <button class="small" data-poll="${esc(d.id)}" title="Liest das Gerät sofort neu aus. Ändert nichts.">↻ neu auslesen</button>
       ${d.hostKeyChanged ? `<button class="small" data-hostkey="${esc(d.id)}" title="Nach Rückfrage: übernimmt genau diesen neuen SSH-Schlüssel (${esc(d.hostKeyChanged)}).">SSH-Schlüssel übernehmen</button>` : ''}
     </div>
@@ -1410,7 +1413,7 @@ function renderWwan(d, w) {
     </div>
     <div class="btns" style="justify-content:flex-start" ${adm ? '' : 'hidden'}>
       <button class="small" data-dx="wwsave" title="Speichert Netz, APN und PIN auf dem Manager. Ändert nichts am Gerät.">Speichern</button>
-      <button class="small primary" data-dx="wwprev" title="Speichert und zeigt, was auf dem Gerät geändert würde – erst „Jetzt ausführen“ ändert etwas.">Vorschau &amp; ausrollen</button>
+      <button class="small primary" data-dx="wwprev" ${lock(d)} title="Speichert und zeigt, was auf dem Gerät geändert würde – erst „Jetzt ausführen“ ändert etwas.">Vorschau &amp; ausrollen</button>
       <span class="hint" id="wwMsg"></span></div>
     <div id="wwPlan" hidden style="margin-top:8px"></div>
     <h3 style="margin-top:14px">Volumen über LTE <span class="hint" style="font-weight:normal">(Stichtag 1. des Monats · <a href="/api/devices/${encodeURIComponent(d.id)}/wwan/usage.csv">CSV</a>)</span></h3>
@@ -1506,7 +1509,7 @@ function netNode(n, q, path) {
       ${rows ? `<div class="wrap" style="margin:2px 0 0 18px"><table>${rows}</table></div>` : ''}${kids ? `<div class="ntree">${kids}</div>` : ''}</div>`;
   }
   if (q && !hit && !ports) return '';
-  return `<details open><summary><b>${esc(n.identity)}</b> <span class="mute">${esc(n.model || '')}${n.uplink ? ' · Uplink ' + esc(n.uplink) : ''}</span> ${n.id ? `<a href="#dev/${encodeURIComponent(n.id)}" class="hint" title="Detailseite des Geräts">Details ›</a>` : '<span class="hint">nicht verwaltet – Ports unbekannt, darunter alle Geräte ohne verwaltetes Gerät darüber</span>'}</summary><div class="ntree">${ports || '<div class="hint">keine Ports mit Einträgen</div>'}</div></details>`;
+  return `<details open><summary><b>${esc(n.identity)}</b> <span class="mute">${esc(n.model || '')}${n.uplink ? ' · Uplink ' + esc(n.uplink) : ''}</span> ${n.id ? `<a href="#dev/${encodeURIComponent(n.id)}" class="hint" title="Detailseite des Geräts">Details ›</a>` : '<span class="hint">nicht verwaltet – Ports unbekannt, darunter alle Geräte ohne verwaltetes Gerät darüber</span>'}</summary>${n.uplink ? `<div class="hint" title="Der Uplink führt zum Gerät darüber. Dort steht alles, was hier über diesen Port läuft.">Uplink ${esc(n.uplink)}: MACs dort stehen beim Gerät darüber</div>` : ''}<div class="ntree">${ports || '<div class="hint">keine Ports mit Einträgen</div>'}</div></details>`;
 }
 function renderNet() {
   const t = netData; if (!t) return;

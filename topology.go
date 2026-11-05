@@ -17,7 +17,7 @@ import (
 // Switch; darunter je Port die dort gelernten MAC-Adressen und die weiteren
 // verwalteten Geräte mit ihren Ports. Nur lesend:
 //   - /interface/bridge/host  → welche MAC an welchem Port (inkl. WLAN-Clients)
-//   - /ip/neighbor (MNDP/LLDP) → welches verwaltete Gerät an welchem Port hängt
+//   - /ip/neighbor (MNDP/LLDP) → Ersatz, wenn die MAC-Tabelle ein Gerät nicht kennt
 //   - /interface              → eigene MACs der Geräte (Zuordnung MAC → Gerät)
 //   - /ip/arp, DHCP-Leases     → IP und Hostname zu einer MAC
 
@@ -184,77 +184,11 @@ func BuildTopology(raws []topoRaw, root string) Topology {
 	if foreign {
 		parent, parentPort, uplink = foreignTree(ok, owner)
 	} else {
-		// Breitensuche: Geräte an ihren Eltern-Port hängen
-		parent = map[string]string{root: ""}
-		parentPort = map[string]string{}
-		queue := []string{root}
-		for len(queue) > 0 {
-			a := queue[0]
-			queue = queue[1:]
+		parent, parentPort, uplink = managedTree(ok, root, seenPorts(ok, owner, func(add func(from, port, to string)) {
 			for _, e := range edges {
-				if e.from == a {
-					if _, seen := parent[e.to]; !seen {
-						parent[e.to], parentPort[e.to] = a, e.port
-						queue = append(queue, e.to)
-					}
-				}
+				add(e.from, e.port, e.to)
 			}
-		}
-		// Uplink eines Geräts: Port, an dem es den Eltern-Knoten sieht (Nachbar, sonst MAC-Tabelle)
-		upl := func(id string) string {
-			par := parent[id]
-			if par == "" {
-				return ""
-			}
-			for _, e := range edges {
-				if e.from == id && e.to == par {
-					return e.port
-				}
-			}
-			for _, h := range byID[id].Hosts {
-				if owner[normMAC(h["mac-address"])] == par {
-					return h["on-interface"]
-				}
-			}
-			return ""
-		}
-		depth := func(id string) int {
-			n := 0
-			for p := parent[id]; p != ""; p = parent[p] {
-				n++
-			}
-			return n
-		}
-		// Ersatz ohne Nachbar-Eintrag: dort einhängen, wo die MAC des Geräts am tiefsten
-		// gelernt wird – aber nie über den Uplink eines Geräts (dort steht alles von oben)
-		for changed := true; changed; {
-			changed = false
-			for _, r := range ok {
-				if _, in := parent[r.ID]; in {
-					continue
-				}
-				best, bestPort, bestDepth := "", "", -1
-				for _, x := range ok {
-					if _, in := parent[x.ID]; !in || x.ID == r.ID {
-						continue
-					}
-					ux := upl(x.ID)
-					for _, h := range x.Hosts {
-						if owner[normMAC(h["mac-address"])] == r.ID && h["on-interface"] != ux && depth(x.ID) > bestDepth {
-							best, bestPort, bestDepth = x.ID, h["on-interface"], depth(x.ID)
-						}
-					}
-				}
-				if best != "" {
-					parent[r.ID], parentPort[r.ID] = best, bestPort
-					changed = true
-				}
-			}
-		}
-		uplink = map[string]string{}
-		for id := range parent {
-			uplink[id] = upl(id)
-		}
+		}))
 	}
 	children := map[string][]string{}
 	for id, par := range parent {
@@ -490,6 +424,87 @@ func (p *Poller) SetTopoRoot(key, id string) error {
 	}
 	b, _ := json.MarshalIndent(m, "", "  ")
 	return writeFileAtomic(p.topoRootPath(), b, 0o600)
+}
+
+// seenPorts sagt je Gerät, an welchem Port es die anderen Geräte sieht. Die
+// MAC-Tabelle zählt zuerst (das ist der Weg, den der Verkehr nimmt), Nachbarn
+// ergänzen, was dort fehlt.
+func seenPorts(ok []*topoRaw, owner map[string]string, neighbors func(add func(from, port, to string))) map[string]map[string]string {
+	seen := map[string]map[string]string{}
+	add := func(from, port, to string) {
+		if seen[from] == nil {
+			seen[from] = map[string]string{}
+		}
+		if port != "" && to != "" && to != from && seen[from][to] == "" {
+			seen[from][to] = port
+		}
+	}
+	for _, r := range ok {
+		for _, h := range r.Hosts {
+			if h["local"] != "true" {
+				add(r.ID, h["on-interface"], owner[normMAC(h["mac-address"])])
+			}
+		}
+	}
+	neighbors(add)
+	return seen
+}
+
+// managedTree bestimmt Eltern und Uplinks mit verwalteter Wurzel. Ein Nachbar
+// beweist keine direkte Verbindung: MNDP läuft durch Bridges, der Router sieht so
+// jedes Gerät am selben Port. Darum: Y liegt zwischen der Wurzel und X, wenn Y das
+// Gerät X an einem anderen Port sieht als die Wurzel. Elternteil ist der tiefste
+// dieser Vorfahren. Ein Gerät ohne erkennbare Richtung zur Wurzel ist für niemanden
+// Vorfahr; ein Kreis in den Daten wird an der Wurzel aufgebrochen.
+func managedTree(ok []*topoRaw, root string, seen map[string]map[string]string) (parent, parentPort, uplink map[string]string) {
+	anc := map[string]map[string]bool{} // X → Vorfahren
+	for _, y := range ok {
+		up := seen[y.ID][root]
+		if y.ID != root && up == "" {
+			continue
+		}
+		for x, port := range seen[y.ID] {
+			if x == root || port == up {
+				continue
+			}
+			if anc[x] == nil {
+				anc[x] = map[string]bool{}
+			}
+			anc[x][y.ID] = true
+		}
+	}
+	parent, parentPort, uplink = map[string]string{root: ""}, map[string]string{}, map[string]string{}
+	for _, x := range ok {
+		best, bestN := "", -1
+		for y := range anc[x.ID] {
+			n := len(anc[y])
+			if n > bestN || (n == bestN && (best == root || (y != root && y < best))) {
+				best, bestN = y, n
+			}
+		}
+		if best != "" {
+			parent[x.ID], parentPort[x.ID] = best, seen[best][x.ID]
+		}
+	}
+	for _, x := range ok {
+		cur := x.ID
+		for i := 0; i <= len(ok) && cur != root && cur != ""; i++ {
+			cur = parent[cur]
+		}
+		if cur != root {
+			delete(parent, x.ID)
+			delete(parentPort, x.ID)
+			if p := seen[root][x.ID]; p != "" {
+				parent[x.ID], parentPort[x.ID] = root, p
+			}
+		}
+	}
+	for id, par := range parent {
+		if par != "" {
+			uplink[id] = firstNonEmpty(seen[id][root], seen[id][par])
+		}
+	}
+	return parent, parentPort, uplink
 }
 
 // foreignTree bestimmt Eltern und Uplinks ohne verwaltete Wurzel (Fremdgerät oben).
