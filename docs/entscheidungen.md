@@ -583,3 +583,14 @@ Monats; nur erfassen, keine Schwelle; mm und Cloud; noch kein Testgerät.
 - **Die Auswahl kommt vom Router des Standorts,** nicht aus dem, was Geräte zufällig kennen.
 - **Uplink gesperrt, unklarer Uplink ebenfalls,** wie bei Loop Protect. `uplinkPorts` liegt dafür in `uplink.go`.
 
+## 2026-11-06 – Meshlink und Loop Protect
+
+- **Fund:** Ein Neustart des Switches unterbricht PoE nicht. Der Access Point läuft weiter, verliert aber den Link und
+  wechselt auf Meshlink. Kommt der Port zurück, sind Kabel und Station zugleich aktiv: eine Schleife. Loop Protect sperrte
+  den Port nach Sekunden, der Wächter brauchte 20 s stabilen Link, das Gerät kam also nie zurück.
+- **Der Wächter schaltet beim Rückweg sofort um.** Die Wartezeit gilt nur noch für den Weg zum Meshlink.
+- **Loop Protect lässt Ports mit Meshlink-Geräten aus.** Dort kommt die Schleife gewollt zustande, RSTP fängt sie ab.
+  Erkannt wird das an den Nachbarn, MNDP läuft aber durch Bridges: Ein Port zu einem Switch mit Meshlink-Gerät dahinter
+  bleibt deshalb auch ausgenommen. Das ist die sichere Seite.
+- **„Zuletzt verbunden mit“ steht am Gerät,** weil ein offline-Gerät nichts mehr meldet.
+

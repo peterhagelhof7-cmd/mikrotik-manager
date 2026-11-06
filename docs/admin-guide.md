@@ -319,6 +319,12 @@ Schreiben wieder frei. Das ändert nichts am Gerät, der Tunnel bleibt stehen.
 
 Die Cloud muss den eigenen Benutzer schon kennen; eine ältere Cloud lehnt dieser Manager beim Prüfen ab.
 
+### Verbunden mit
+
+Oben auf der Geräteseite steht, woran das Gerät hängt: **Verbunden mit** Gerät, Port und ob es über Meshlink läuft.
+Ist das Gerät nicht erreichbar, steht dort **Zuletzt verbunden mit** samt Zeitpunkt. Der Stand kommt aus dem
+Netzwerk-Baum, wird beim Öffnen der Seite und danach jede Minute gelesen und am Gerät gemerkt.
+
 ### PoE-Cycle
 
 Geräte mit PoE-Ausgängen haben in der Geräteliste und im Kopf der Geräteseite den Knopf **PoE-Cycle**: Alle Ports, die

@@ -1309,7 +1309,7 @@ function openDetail(id) {
       <div class="card"><h3>Backups auf dem Manager</h3><div id="dBak"></div></div>
       <div class="card"><div class="dhead"><h3 style="margin:0">Dateien auf dem Gerät</h3><button class="small" data-dx="files" title="Liest die Dateiliste neu vom Gerät. Ändert nichts.">↻ neu lesen</button></div><div id="dFiles"><div class="hint">lese Dateien …</div></div></div>`;
     window.scrollTo(0, 0);
-    loadPorts(); loadWan(); loadHist(); loadFiles(); loadWlan(); loadWwan();
+    parentHtml = ''; loadParent(); loadPorts(); loadWan(); loadHist(); loadFiles(); loadWlan(); loadWwan();
   }
   renderDetail();
   clearInterval(detailTimer);
@@ -1317,7 +1317,7 @@ function openDetail(id) {
   detailTimer = setInterval(() => {
     if ($('#detail').hidden || document.visibilityState !== 'visible') return;
     loadPorts(true); loadWan(true);
-    if (++ticks % 4 === 0) loadWlan(true); // WLAN jede Minute (die Clients liest der Manager ohnehin minütlich)
+    if (++ticks % 4 === 0) { loadWlan(true); loadParent(); } // WLAN jede Minute (die Clients liest der Manager ohnehin minütlich)
   }, 15000);
 }
 function closeDetail() {
@@ -1341,6 +1341,7 @@ function renderDetail() {
   $('#dHead').innerHTML = `<div class="dhead"><button class="small" data-dx="back" title="Zurück zur Geräteliste.">← Geräte</button>
       <span class="dot ${online(d) ? 'on' : 'off'}"></span><h2>${esc(d.identity || d.ip)}</h2>${st}${d.hostKeyChanged ? ' <span class="badge b-bad">SSH-Schlüssel geändert</span>' : ''}</div>
     ${d.apiError ? `<div class="hint" style="color:#f0a0a0;margin-top:6px">${esc(d.apiError)}</div>` : ''}
+    <div id="dParent" class="hint" style="margin-top:6px;color:var(--fg)">${parentHtml}</div>
     <div class="kv">${kv.map(([k, v]) => `<div><span>${k}</span>${v}</div>`).join('')}</div>
     <h3 style="margin-top:16px">Standort</h3>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="dLoc" maxlength="200" style="flex:1;min-width:220px" placeholder="z. B. Technikraum EG, Rack 2" value="${esc(d.location || '')}" title="Freier Text, wo das Gerät steht. Nur auf dem Manager gespeichert, ändert nichts am Gerät.">
@@ -1374,6 +1375,21 @@ function portState(p) {
   return p.poeUsed ? l + ` · PoE ${p.poeWatt ? p.poeWatt + ' W' : 'an'}` : l;
 }
 const rosTime = s => { const m = /^(\d{4})-(\d\d)-(\d\d) (.*)$/.exec(s || ''); return m ? `${m[3]}.${m[2]}.${m[1]} ${m[4]}` : (s || ''); };
+let parentHtml = '';
+async function loadParent() {
+  const id = detailId; if (!id) return;
+  try {
+    const r = await fetch(`/api/devices/${encodeURIComponent(id)}/parent`, {cache: 'no-store'});
+    if (!r.ok) throw new Error(await r.text());
+    const i = await r.json();
+    if (id !== detailId) return;
+    const p = i.parent, name = p ? (p.id ? `<a href="#dev/${encodeURIComponent(p.id)}">${esc(p.identity)}</a>` : esc(p.identity)) : '';
+    const how = p ? (p.port ? ` an Port <span class="mono">${esc(p.port)}</span>` : '') + (p.mesh ? ' über Meshlink' : '') : '';
+    parentHtml = i.root ? 'Wurzel des Netzwerks' : i.connected && p ? `🔗 Verbunden mit <b>${name}</b>${how}`
+      : p ? `⚠ Zuletzt verbunden mit <b>${name}</b>${how} <span class="mute">(${esc(new Date(p.at).toLocaleString('de-DE'))})</span>` : '<span class="mute">Noch keine Verbindung bekannt</span>';
+    if ($('#dParent')) $('#dParent').innerHTML = parentHtml;
+  } catch (e) { /* Infofläche, kein Grund für eine Meldung */ }
+}
 async function loadWan(quiet) {
   const d = detailDev(); if (!d || !d.router) { const c = $('#dWanCard'); if (c) c.hidden = true; return; }
   const id = detailId;

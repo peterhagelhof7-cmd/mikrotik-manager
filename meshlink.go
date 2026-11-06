@@ -41,7 +41,9 @@ type CentralMeshlink struct {
 
 // meshWatch ist das Wächter-Skript auf dem Gerät (nur ASCII – RouterOS gibt
 // Umlaute in anderer Kodierung zurück). Globale Variablen überleben Läufe aus
-// dem Zeitplan nicht, deshalb wird im selben Lauf per :delay nachgeprüft.
+// dem Zeitplan nicht, deshalb wird im selben Lauf per :delay nachgeprüft. Nur der Weg zum
+// Meshlink wartet: Sind Kabel und Station zugleich aktiv, ist das eine Schleife, und Loop
+// Protect sperrt den Port nach Sekunden. Der Rückweg muss also sofort greifen.
 const meshWatch = `# mm-meshlink (vom mikrotik-manager): ohne Etherlink ueber die Meshlink-Station
 :local sta [/interface wifi find name="mm-mesh-sta"]
 :local ap [/interface wifi find name="mm-mesh-ap"]
@@ -50,18 +52,18 @@ const meshWatch = `# mm-meshlink (vom mikrotik-manager): ohne Etherlink ueber di
 :local staOff [/interface wifi get $sta disabled]
 :local link [/interface get $eth running]
 :if ($link != $staOff) do={
-  :delay 10s
-  :local same ([/interface get $eth running] = $link)
-  :if ($same) do={
+  :if ($link) do={
+    /interface wifi set $sta disabled=yes
+    /interface wifi set $ap disabled=no
+    :log warning "mm-meshlink: Etherlink wieder da - Meshlink-Station aus, Meshlink-Angebot an"
+  } else={
     :delay 10s
-    :set same ([/interface get $eth running] = $link)
-  }
-  :if ($same) do={
-    :if ($link) do={
-      /interface wifi set $sta disabled=yes
-      /interface wifi set $ap disabled=no
-      :log warning "mm-meshlink: Etherlink wieder da - Meshlink-Station aus, Meshlink-Angebot an"
-    } else={
+    :local same ([/interface get $eth running] = $link)
+    :if ($same) do={
+      :delay 10s
+      :set same ([/interface get $eth running] = $link)
+    }
+    :if ($same) do={
       /interface wifi set $ap disabled=yes
       /interface wifi set $sta disabled=no
       :log warning "mm-meshlink: kein Etherlink - Meshlink-Station an, Meshlink-Angebot aus"

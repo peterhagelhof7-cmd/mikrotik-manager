@@ -54,6 +54,9 @@ type Device struct {
 	CredSource  string    `json:"credSource,omitempty"` // device | default | factory
 	LastPoll    time.Time `json:"lastPoll,omitempty"`
 
+	// zuletzt bekanntes Gerät oberhalb (parent.go)
+	Parent *DeviceParent `json:"parent,omitempty"`
+
 	// vom Benutzer gepflegt (Detailseite)
 	Location string `json:"location,omitempty"` // Standort / Notiz, z. B. „Technikraum EG“
 
