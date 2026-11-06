@@ -7,7 +7,14 @@ Docker-Container (z. B. Synology).
 
 - **Übersicht:** Modell, RouterOS, Firmware, WLAN-Paket, Laufzeit, API-Status,
   WLAN-Clients je Gerät und über alle Geräte (SSID, Band, Signal, Rate)
+- **Detailseite je Gerät:** Ports, WLAN, Konfig-Historie, Dateien, lokale Benutzer
+- **Netzwerk-Baum:** welche MAC an welchem Port, auch je VLAN
+- **Router:** Portrollen, WAN (DHCP, IPoE, PPPoE, WWAN), VLANs, DHCP, NAT, Firewall, Backup WAN
+- **WWAN / LTE-Router:** PIN je SIM, LAN, Volumen je Monat
+- **Meshlink:** Access Points ohne Kabel hängen sich automatisch per WLAN an
+- **Feste IP, SNMP, Untagged VLAN, PoE-Cycle** je Gerät
 - **Benutzer je Gerät:** lokale Benutzer auf der Detailseite ansehen und ihr Passwort setzen
+- **Cloud-Umzug:** Geräte in eine MikroTik-Manager Cloud bringen, der lokale Manager liest danach nur mit
 - **WLAN-Infopage:** A4-Seite mit Name, Passwort und QR-Code je WLAN
 - **Neustart-Routine:** gewählte Geräte zur festen Zeit nacheinander neu starten, nie zwei gleichzeitig, Abbruch beim ersten Fehler;
 - **Updates:** RouterOS und RouterBOARD-Firmware, Neustart – nacheinander, mit Backup vorab;
