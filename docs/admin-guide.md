@@ -131,6 +131,8 @@ lässt sich als Lesezeichen speichern; „← Geräte“ oder Zurück im Browser
 Alles auf der Detailseite liest nur – außer dem Standort-Text und den Aktionsknöpfen, die
 wie in der Liste mit Rückfrage arbeiten.
 
+**Benutzer auf dem Gerät:** zeigt alle lokalen Benutzer mit Gruppe, Zustand und letzter Anmeldung. Ein Admin setzt hier das Passwort eines Benutzers, es gilt sofort und wird mit einer Anmeldung geprüft. Der Verwaltungsbenutzer ist ausgegraut: alle Benutzer `mikrotik-manager…`, solche mit diesem Kommentar und der Benutzer, mit dem sich der Manager am Gerät anmeldet.
+
 ### 4.2 WWAN / LTE-Router (z. B. Chateau LTE7 ax)
 
 Geräte mit LTE-Modem erkennt der Manager selbst (Hinweis **LTE** und Monatsvolumen in der
@@ -380,6 +382,8 @@ mehr aufs Gerät, stellt es nach 5 Minuten den alten Zustand wieder her. Geräte
 ihre alte Adresse, bis ihre DHCP-Lease erneuert wird. Nicht enthalten: Portweiterleitung, feste
 DHCP-Zuweisungen, IPv6, VPN-Einwahl, Lastverteilung.
 
+Speichern legt die Einstellungen nur auf dem Manager ab. Solange sie nicht auf dem Gerät sind, steht im Tab ein Hinweis. Erst **Vorschau** und **Jetzt ausführen** überträgt sie. Nach dem Ausrollen prüft der Manager bei WWAN APN und PIN am Gerät: abweichender APN, ein Modem, das den APN aus dem Mobilfunknetz nimmt, ein anderes APN-Profil als `default` oder eine abgelehnte PIN gelten als Fehler, das Gerät rollt dann zurück. Ein eingetragener APN setzt `use-network-apn=no`. Prüfung und Einstellung sind an einem echten LTE-Router noch nicht gelaufen.
+
 ## 6. WLAN
 
 ### 6.1 WLAN-Dialog eines Geräts (Knopf „WLAN“)
@@ -473,6 +477,8 @@ abschalten.
 WLAN-Dialog, Kennzeichen „zentral“ in der Liste), damit sie nicht auseinanderlaufen.
 
 > Tipp: Neue Vorgaben zuerst mit nur **einem** ausgewählten Gerät ausrollen.
+
+**Infopage:** Der Knopf in der WLAN-Zeile erzeugt eine A4-Seite als PDF mit WLAN-Name, Passwort und QR-Code zum Aushängen. Sie nutzt den gespeicherten Stand, ungespeicherte Änderungen also erst speichern.
 
 ### 7.x Meshlink (APs ohne Netzwerkkabel)
 

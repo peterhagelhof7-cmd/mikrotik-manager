@@ -161,6 +161,7 @@ pre.diff .add{color:#7fdca4}pre.diff .del{color:#f0a0a0}pre.diff .gap{color:var(
         <button class="primary" id="rSave" title="Speichert auf dem Manager. Ändert nichts am Gerät.">Speichern</button>
         <button id="rPrev" title="Speichert und zeigt, was auf dem Gerät geändert würde. Erst „Jetzt ausführen“ ändert das Gerät.">Vorschau</button>
       </div>
+      <div class="hint" id="rtPending" style="color:var(--warn);margin-top:8px" hidden>⚠ Gespeichert, aber noch nicht auf dem Gerät. Erst „Vorschau“ und dann „Jetzt ausführen“ überträgt die Einstellungen.</div>
       <div id="rPlan" class="card" style="margin:10px 0 0" hidden></div>
     </div>
   </div>
@@ -656,6 +657,7 @@ function recommendChannel2(d) {
 
 // --- Zentrale WLAN-Verwaltung ---
 let central = null;
+const ppskSsid = null; // PPSK gibt es nur in der Cloud
 const BANDS = {both: 'beide', '2': 'nur 2,4 GHz', '5': 'nur 5 GHz'};
 const CAUTH = ['wpa2-psk,wpa3-psk', 'wpa3-psk', 'wpa2-psk'];
 const CH2 = [2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, 2467, 2472];
@@ -663,14 +665,27 @@ const CH5 = [5180, 5200, 5220, 5240, 5260, 5280, 5300, 5320, 5500, 5520, 5540, 5
 const opt = (v, cur, label) => `<option value="${esc(v)}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(label)}</option>`;
 const wlanDevs = () => (data.devices || []).filter(d => d.wirelessPkg).sort((a, b) => (a.identity || '').localeCompare(b.identity || ''));
 
+async function wlanInfo(tr, url, nets, msg) {
+  const ssid = tr.querySelector('[data-c=ssid]').value.trim(), saved = (nets || []).find(n => n.ssid === ssid);
+  if (!saved || saved.passphrase !== tr.querySelector('[data-c=pass]').value) { $(msg).textContent = 'Erst speichern, die Infopage nutzt den gespeicherten Stand.'; return; }
+  try {
+    const r = await fetch(url + (url.includes('?') ? '&' : '?') + 'ssid=' + encodeURIComponent(ssid), {cache: 'no-store'});
+    if (!r.ok) throw new Error(await r.text());
+    const u = URL.createObjectURL(await r.blob()), a = document.createElement('a');
+    a.href = u; a.download = (r.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'wlan-info.pdf';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 10000);
+    $(msg).textContent = '';
+  } catch (e) { $(msg).textContent = '❌ Infopage: ' + e.message; }
+}
 function netRow(n) {
+  const off = !n.ssid || n.ssid === ppskSsid, why = !n.ssid ? 'Erst speichern.' : n.ssid === ppskSsid ? 'Nicht für PPSK-WLANs: Jeder Bewohner hat ein eigenes Passwort, das Zugangs-PDF steht beim Bewohner.' : 'Erzeugt eine A4-Seite mit WLAN-Name, Passwort und QR-Code. Nutzt den gespeicherten Stand.';
   return `<tr data-net><td><input data-c="ssid" value="${esc(n.ssid)}" maxlength="32" autocomplete="off" title="Netzname (SSID), bis 32 Zeichen, nur ASCII."></td>
     <td><input data-c="pass" type="password" value="${esc(n.passphrase)}" maxlength="63" autocomplete="off" title="WLAN-Passwort, 8–63 Zeichen, nur ASCII."> <button class="small" type="button" data-show title="Zeigt das Passwort im Klartext bzw. verbirgt es wieder. Ändert nichts.">👁</button></td>
     <td><select data-c="auth" title="Verschlüsselung. Empfohlen: WPA2/WPA3 – neue Geräte nutzen WPA3, ältere weiter WPA2. Geräte mit altem wireless-Paket können kein WPA3 und bekommen WPA2.">${CAUTH.map(a => opt(a, normAuth(n.auth) || CAUTH[0], AUTH_NAMES[a] + (a === CAUTH[0] ? ' (empfohlen)' : ''))).join('')}</select></td>
     <td><select data-c="bands" title="Auf welchen Bändern dieses WLAN ausgestrahlt wird.">${Object.entries(BANDS).map(([v, l]) => opt(v, n.bands || 'both', l)).join('')}</select></td>
     <td><input data-c="vlan" type="number" min="2" max="4094" value="${n.vlan || ''}" placeholder="–" style="width:80px" title="VLAN-ID für die Clients dieses WLANs (2–4094). Leer = kein VLAN, Clients landen im normalen Netz der Bridge. Mit VLAN läuft es auf den Ethernet-Ports des Geräts getaggt – der Switch-Port muss das VLAN getaggt durchreichen."></td>
     <td><input data-c="hidden" type="checkbox" ${n.hidden ? 'checked' : ''} style="width:auto" title="Haken = SSID wird nicht ausgestrahlt (verstecktes Netz). Bringt kaum Sicherheit, erschwert aber das Verbinden."></td>
-    <td><button class="small" type="button" data-del title="Entfernt dieses WLAN aus der Liste. Ändert nichts, erst „Speichern“ übernimmt.">entfernen</button></td></tr>`;
+    <td style="white-space:nowrap"><button class="small" type="button" data-info ${off ? 'disabled' : ''} title="${esc(why)}">Infopage</button> <button class="small" type="button" data-del title="Entfernt dieses WLAN aus der Liste. Ändert nichts, erst „Speichern“ übernimmt.">entfernen</button></td></tr>`;
 }
 function centralRadioRow(key, label, r, is5) {
   const chans = (is5 ? [] : [['plan', 'Kanalplan 1/6/11 reihum (empfohlen)']])
@@ -734,6 +749,7 @@ async function loadCentral() {
 }
 $('#cNets').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.info !== undefined) wlanInfo(b.closest('tr'), '/api/central/infopage', central && central.networks, '#cMsg');
   if (b.dataset.del !== undefined) b.closest('tr').remove();
   if (b.dataset.show !== undefined) { const i = b.previousElementSibling; i.type = i.type === 'password' ? 'text' : 'password'; }
 });
@@ -874,12 +890,17 @@ function rNetRow(n, i) {
     <td><input data-n="first" value="${esc(n.first || '')}" ${d}></td><td><input data-n="last" value="${esc(n.last || '')}" ${d}></td><td><input data-n="dns" value="${esc(n.dns || '')}" ${d} placeholder="Router"></td>
     <td>${i === 0 ? '' : '<button class="small" type="button" data-ndel title="Entfernt dieses Netzwerk aus der Liste.">×</button>'} <button class="small" type="button" data-nadd title="Fügt ein weiteres Netzwerk hinzu.">+</button></td></tr>`;
 }
+function rPending() {
+  const d = (data.devices || []).find(x => x.id === $('#rDev').value);
+  $('#rtPending').hidden = !(d && d.routerPending);
+}
 function renderRouter() {
   const r = routerData; if (!r) return;
   const devs = rDevs(), cur = r.cfg.device || '';
   $('#rDev').innerHTML = opt('', cur, '– kein Router –') + devs.map(d => opt(d.id, cur, `${d.identity} (${d.model || d.board || ''})`)).join('');
   const sel = $('#rDev').value;
   $('#rPortsCard').hidden = $('#rNetsCard').hidden = !sel;
+  rPending();
   if (!sel) return;
   const saved = {}; for (const p of r.cfg.ports || []) saved[p.name] = p;
   $('#rPorts').innerHTML = (r.ports || []).map(p => rPortRow(saved[p.name] || {name: p.name, role: p.lte ? 'off' : 'access'}, p.lte)).join('');
@@ -904,7 +925,7 @@ function collectRouter() {
 function rRedraw() { const c = collectRouter(); routerData.cfg = Object.assign({}, routerData.cfg, c, {ports: c.ports.map(p => Object.assign({}, (routerData.cfg.ports || []).find(o => o.name === p.name), p))}); renderRouter(); }
 async function saveRouter() {
   routerData.cfg = await api('POST', '/api/router' + rQuery(), collectRouter());
-  load();
+  await load();
 }
 $('#rDev').onchange = () => { $('#rPlan').hidden = true; loadRouter($('#rDev').value || undefined); };
 $('#rPorts').addEventListener('change', e => { if (e.target.dataset.r === 'role' || e.target.dataset.r === 'type') rRedraw(); });
@@ -917,7 +938,7 @@ $('#rNets').addEventListener('click', e => {
   routerData.cfg.nets = c.nets; renderRouter();
 });
 $('#rSave').onclick = async () => {
-  try { await saveRouter(); renderRouter(); $('#rtMsg').textContent = '✅ gespeichert'; } catch (e) { $('#rtMsg').textContent = '❌ ' + e.message; }
+  try { await saveRouter(); renderRouter(); $('#rtMsg').textContent = '✅ auf dem Manager gespeichert'; } catch (e) { $('#rtMsg').textContent = '❌ ' + e.message; }
 };
 $('#rPrev').onclick = async () => {
   try { await saveRouter(); renderRouter(); } catch (e) { $('#rtMsg').textContent = '❌ ' + e.message; return; }
@@ -1154,6 +1175,7 @@ function render() {
   if (detailId !== null) renderDetail();
   if ($('#aDlg').open) renderAllClients();
   if (!$('#tabAuto').hidden) { renderAutoState(); if (auto && auto.running) loadAuto(true); }
+  if (!$('#tabRouter').hidden) rPending();
   if (!$('#tabReb').hidden && rbPlan && rbPlan.running) loadReboot(true);
   const q = $('#q').value.toLowerCase();
   const ds = data.devices || [];
@@ -1379,11 +1401,12 @@ function openDetail(id) {
         <div class="legend" style="margin-top:8px"><span class="port wl"><i></i>aus / sendet nicht</span><span class="port wl wl-on"><i></i>sendet, keine Clients</span><span class="port wl wl-cl"><i></i>sendet, mit Clients</span><span class="port wl dis"><i></i>deaktiviert</span></div>
         <div id="dWlan"><div class="hint">lese WLAN …</div></div></div>
       <div class="card" id="dWwanCard" hidden><div class="dhead"><h3 style="margin:0">WWAN / LTE-Router</h3><button class="small" data-dx="wwan" title="Liest LTE-Zustand und Volumen neu. Ändert nichts.">↻ neu lesen</button></div><div id="dWwan"><div class="hint">lese LTE …</div></div></div>
+      <div class="card"><div class="dhead"><h3 style="margin:0">Benutzer auf dem Gerät</h3><button class="small" data-dx="users" title="Liest die lokalen Benutzer neu vom Gerät. Ändert nichts.">neu lesen</button></div><div id="dUsers"><div class="hint">lese Benutzer …</div></div></div>
       <div class="card"><div class="dhead"><h3 style="margin:0">Konfig-Historie</h3><button class="small" data-dx="hist" title="Liest den Verlauf neu. Ändert nichts.">↻ neu lesen</button></div><div id="dHist"><div class="hint">lese Verlauf …</div></div></div>
       <div class="card"><h3>Backups auf dem Manager</h3><div id="dBak"></div></div>
       <div class="card"><div class="dhead"><h3 style="margin:0">Dateien auf dem Gerät</h3><button class="small" data-dx="files" title="Liest die Dateiliste neu vom Gerät. Ändert nichts.">↻ neu lesen</button></div><div id="dFiles"><div class="hint">lese Dateien …</div></div></div>`;
     window.scrollTo(0, 0);
-    parentHtml = ''; loadParent(); loadPorts(); loadWan(); loadHist(); loadFiles(); loadWlan(); loadWwan();
+    parentHtml = ''; loadParent(); loadPorts(); loadWan(); loadHist(); loadFiles(); loadWlan(); loadWwan(); loadUsers();
   }
   renderDetail();
   clearInterval(detailTimer);
@@ -1703,6 +1726,43 @@ async function saveWwan(preview) {
     } else { loadWwan(); }
   } catch (e) { $('#wwMsg').textContent = '❌ ' + e.message; }
 }
+// --- Lokale Benutzer des Geräts ---
+async function loadUsers() {
+  const id = detailId;
+  try {
+    const r = await fetch(`/api/devices/${encodeURIComponent(id)}/users`, {cache: 'no-store'});
+    if (!r.ok) throw new Error(await r.text());
+    const l = await r.json();
+    if (id === detailId) renderUsers(l);
+  } catch (e) { if (id === detailId) $('#dUsers').innerHTML = `<div class="hint" style="color:#f0a0a0">Benutzer nicht lesbar: ${esc(e.message)}</div>`; }
+}
+function renderUsers(l) {
+  const d = detailDev(), ok = d && wwAdmin(d) && !d.cloudUrl;
+  $('#dUsers').innerHTML = `<div class="hint">Der Verwaltungsbenutzer ist ausgegraut, sein Passwort pflegt der Manager.</div>
+    <div class="wrap wl" style="margin-top:8px"><table><thead><tr><th>Benutzer</th><th>Gruppe</th><th>Zustand</th><th>Letzte Anmeldung</th><th>Neues Passwort</th></tr></thead><tbody>${l.map(u => {
+      const off = u.managed || !ok, why = u.managed ? 'Verwaltungsbenutzer: Das Passwort pflegt der Manager.' : ok ? '' : d && d.cloudUrl ? 'Wird von der Cloud verwaltet, hier nur lesen und sichern.' : 'Dafür fehlt das Recht.';
+      return `<tr data-user="${esc(u.name)}" ${u.managed ? 'style="opacity:.5"' : ''} title="${esc(u.comment || '')}"><td><b>${esc(u.name)}</b>${u.managed ? ' <span class="mute">Verwaltung</span>' : ''}</td>
+        <td>${esc(u.group || '')}</td><td>${u.disabled ? '<span class="mute">deaktiviert</span>' : 'aktiv'}</td><td>${esc(u.lastLogin || '–')}</td>
+        <td><input data-upw type="password" autocomplete="new-password" spellcheck="false" style="width:170px" ${off ? 'disabled' : ''} title="${esc(why || 'Neues Passwort dieses Benutzers.')}">
+          <button class="small" type="button" data-show ${off ? 'disabled' : ''} title="Zeigt das Passwort im Klartext bzw. verbirgt es wieder. Ändert nichts.">👁</button>
+          <button class="small" type="button" data-uset ${off ? 'disabled' : ''} title="${esc(why || 'Setzt das Passwort sofort auf dem Gerät und prüft es mit einer Anmeldung.')}">Passwort setzen</button>
+          <span class="hint" data-umsg></span></td></tr>`;
+    }).join('')}</tbody></table></div>`;
+}
+$('#detail').addEventListener('click', async e => {
+  const u = e.target.closest('#dUsers button'); if (!u) return;
+  const tr = u.closest('tr'), i = tr.querySelector('[data-upw]'), msg = tr.querySelector('[data-umsg]');
+  if (u.dataset.show !== undefined) { i.type = i.type === 'password' ? 'text' : 'password'; return; }
+  if (!i.value) { msg.textContent = 'Passwort eintragen'; return; }
+  if (!confirm(`Passwort von ${tr.dataset.user} auf dem Gerät ändern?`)) return;
+  u.disabled = true; msg.textContent = 'setze …';
+  try {
+    const r = await api('POST', `/api/devices/${encodeURIComponent(detailId)}/users/password`, {user: tr.dataset.user, password: i.value});
+    msg.textContent = (r.ok ? '✅ ' : '❌ ') + r.msg;
+    if (r.ok) i.value = '';
+  } catch (err) { msg.textContent = '❌ ' + err.message; }
+  u.disabled = false;
+});
 $('#detail').addEventListener('click', async e => {
   const b = e.target.closest('button[data-dx]'); if (!b) return;
   const x = b.dataset.dx;
@@ -1715,6 +1775,7 @@ $('#detail').addEventListener('click', async e => {
   if (x === 'ports') { $('#dPortPlan').hidden = true; portVlans = null; $('#dPorts').innerHTML = '<div class="hint">lese Ports …</div>'; loadPorts(); loadWan(); }
   if (x === 'hist') { $('#dHist').innerHTML = '<div class="hint">lese Verlauf …</div>'; loadHist(); }
   if (x === 'files') { $('#dFiles').innerHTML = '<div class="hint">lese Dateien …</div>'; loadFiles(); }
+  if (x === 'users') { $('#dUsers').innerHTML = '<div class="hint">lese Benutzer …</div>'; loadUsers(); }
   if (x === 'loc') {
     try { const r = await api('POST', `/api/devices/${encodeURIComponent(detailId)}/location`, {location: $('#dLoc').value}); flash(r.msg || 'gespeichert'); await load(); loadHist(); }
     catch (err) { flash('Fehler: ' + err.message); }

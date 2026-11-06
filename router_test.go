@@ -241,3 +241,115 @@ func routerSampleValid(t *testing.T) RouterCfg {
 	}
 	return c
 }
+
+// Gespeichert heißt nicht ausgerollt: Der Hinweis bleibt, bis das Gerät der Konfiguration entspricht.
+func TestRouterPending(t *testing.T) {
+	dir := t.TempDir()
+	st := newStore(dir)
+	v, err := openVault(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := newPoller(Config{DataDir: dir}, st, v)
+	c := RouterCfg{Device: "x", Ports: []RouterPort{{Name: "ether1", Role: "wan", Type: "dhcp"}, {Name: "ether2", Role: "access"}},
+		Nets: []RouterNet{{Address: "192.168.10.1/24", VLAN: 1}}}
+	got, err := p.SaveRouter("k", c)
+	if err != nil || !got.Pending {
+		t.Fatalf("%v %+v", err, got)
+	}
+	p.routerApplied("k")
+	if p.Router("k").Pending {
+		t.Fatal("ausgerollt, trotzdem Hinweis")
+	}
+	if got, _ := p.SaveRouter("k", c); got.Pending {
+		t.Fatal("nichts geändert, trotzdem Hinweis")
+	}
+	c.Nets[0].Address = "192.168.11.1/24"
+	if got, _ := p.SaveRouter("k", c); !got.Pending {
+		t.Fatal("geändert, kein Hinweis")
+	}
+	h := routerHash(c, nil)
+	c.Pending = true
+	if routerHash(c, nil) != h {
+		t.Fatal("der Hinweis darf den Stand nicht ändern, sonst gilt das Gerät als abweichend")
+	}
+}
+
+func TestRouterSecretKeepsPending(t *testing.T) {
+	dir := t.TempDir()
+	v, err := openVault(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := newPoller(Config{DataDir: dir}, newStore(dir), v)
+	c := RouterCfg{Device: "x", Ports: []RouterPort{{Name: "lte1", Role: "wan", Type: "wwan"}, {Name: "ether2", Role: "access"}},
+		Nets: []RouterNet{{Address: "192.168.10.1/24", VLAN: 1}}}
+	p.SaveRouter("k", c)
+	p.routerApplied("k")
+	c.Ports[0].Secret = "1234"
+	if got, err := p.SaveRouter("k", c); err != nil || !got.Pending {
+		t.Fatalf("neue PIN: %v %+v", err, got)
+	}
+}
+
+func TestPinRejected(t *testing.T) {
+	for s, want := range map[string]bool{
+		"": false, "ok": false, "OK": false, "no password required": false, "ready": false,
+		"sim pin required": true, "SIM PUK": true, "locked": true, "wrong pin": true, "password required": true,
+	} {
+		if pinRejected(s) != want {
+			t.Errorf("%q", s)
+		}
+	}
+}
+
+func TestRouterLteProblems(t *testing.T) {
+	c := RouterCfg{Ports: []RouterPort{{Name: "lte1", Role: "wan", Type: "wwan", APN: "web"}, {Name: "ether1", Role: "access"}}}
+	sec := map[string]string{"lte1": "1234"}
+	good := map[string]string{"apn": "web", "use-network-apn": "false"}
+	ifs := map[string]string{"lte1": "default"}
+	mon := map[string]map[string]string{"lte1": {"pin-status": "ok"}}
+	if got := routerLteProblems(c, sec, good, ifs, mon); len(got) != 0 {
+		t.Fatal(got)
+	}
+	// Meldet das Gerät nichts, gibt es keinen Fehler und damit kein Zurückrollen.
+	if got := routerLteProblems(c, sec, map[string]string{}, map[string]string{}, map[string]map[string]string{}); len(got) != 0 {
+		t.Fatal(got)
+	}
+	for name, f := range map[string]func() []string{
+		"APN": func() []string { return routerLteProblems(c, sec, map[string]string{"apn": "alt"}, ifs, mon) },
+		"Netz": func() []string {
+			return routerLteProblems(c, sec, map[string]string{"apn": "web", "use-network-apn": "true"}, ifs, mon)
+		},
+		"Profil": func() []string { return routerLteProblems(c, sec, good, map[string]string{"lte1": "kunde"}, mon) },
+		"PIN": func() []string {
+			return routerLteProblems(c, sec, good, ifs, map[string]map[string]string{"lte1": {"pin-status": "sim pin required"}})
+		},
+	} {
+		if len(f()) != 1 {
+			t.Errorf("%s: %v", name, f())
+		}
+	}
+	// Ohne APN und PIN gibt es nichts zu prüfen, auch nicht an einem LTE-Port auf Aus.
+	c.Ports[0].APN = ""
+	if got := routerLteProblems(c, nil, map[string]string{"apn": "alt"}, ifs, mon); len(got) != 0 {
+		t.Fatal(got)
+	}
+	c.Ports[0].Role, c.Ports[0].APN = "off", "web"
+	if got := routerLteProblems(c, sec, map[string]string{"apn": "alt"}, ifs, mon); len(got) != 0 {
+		t.Fatal(got)
+	}
+}
+
+func TestRouterWwanScriptNetworkAPN(t *testing.T) {
+	var b strings.Builder
+	routerWanScript(&b, RouterPort{Name: "lte1", Role: "wan", Type: "wwan", APN: "web"}, "", 1)
+	if !strings.Contains(b.String(), "use-network-apn=no") {
+		t.Fatal(b.String())
+	}
+	b.Reset()
+	routerWanScript(&b, RouterPort{Name: "lte1", Role: "wan", Type: "wwan"}, "", 1)
+	if !strings.Contains(b.String(), "use-network-apn=yes") {
+		t.Fatal(b.String())
+	}
+}

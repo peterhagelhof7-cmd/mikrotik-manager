@@ -116,6 +116,9 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 	mux.Handle("POST /api/reboot-plan", w.auth(w.rec("Neustart-Routine gespeichert", area(w.rebootSave))))
 	mux.Handle("POST /api/reboot-plan/run", w.auth(w.rec("Neustart-Routine gestartet", area(w.rebootRun))))
 	mux.Handle("GET /api/central", w.auth(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { writeJSON(rw, w.pl.Central()) })))
+	mux.Handle("GET /api/central/infopage", w.auth(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		serveWlanInfo(rw, r, w.pl.Central().Networks, "", "")
+	})))
 	mux.Handle("POST /api/central", w.auth(http.HandlerFunc(w.saveCentral)))
 	mux.Handle("POST /api/central/preview", w.auth(http.HandlerFunc(w.centralPreview)))
 	mux.Handle("POST /api/central/apply", w.auth(w.rec("Zentrale WLAN-Konfiguration ausgerollt", http.HandlerFunc(w.centralApply))))
@@ -143,6 +146,8 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 	mux.Handle("GET /api/devices/{id}/port-vlans", w.auth(http.HandlerFunc(w.devicePortVLANs)))
 	mux.Handle("GET /api/devices/{id}/parent", w.auth(http.HandlerFunc(w.deviceParent)))
 	mux.Handle("GET /api/devices/{id}/files", w.auth(http.HandlerFunc(w.deviceFiles)))
+	mux.Handle("GET /api/devices/{id}/users", w.auth(http.HandlerFunc(w.deviceUsers)))
+	mux.Handle("POST /api/devices/{id}/users/password", w.auth(w.rec("Benutzer-Passwort gesetzt", http.HandlerFunc(w.deviceUserPassword))))
 	mux.Handle("GET /api/devices/{id}/history", w.auth(http.HandlerFunc(w.deviceHistory)))
 	mux.Handle("GET /api/devices/{id}/wlan/status", w.auth(http.HandlerFunc(w.deviceWlanStatus)))
 	mux.Handle("GET /api/devices/{id}/wwan", w.auth(http.HandlerFunc(w.deviceWwan)))
@@ -504,6 +509,7 @@ func (w *web) devices(rw http.ResponseWriter, r *http.Request) {
 		Job        *Job      `json:"job,omitempty"`
 		Backups    int       `json:"backups"`
 		Router     bool      `json:"router,omitempty"`
+		RouterTodo bool      `json:"routerPending,omitempty"` // gespeichert, noch nicht ausgerollt
 		LastBackup time.Time `json:"lastBackup,omitempty"`
 		// WLAN-Clients (jede Minute gelesen); nil = noch nicht gelesen
 		Clients   []WlanClient `json:"wlanClients"`
@@ -516,7 +522,7 @@ func (w *web) devices(rw http.ResponseWriter, r *http.Request) {
 	}
 	var out []row
 	for _, d := range w.st.List() {
-		x := row{Router: w.pl.IsRouter(d), Device: d, HasOwnCred: w.vault.Has("dev:" + d.ID), HostKeyChanged: w.pl.hostKeys.Changed(d.ID)}
+		x := row{Router: w.pl.IsRouter(d), RouterTodo: w.pl.IsRouter(d) && w.pl.Router(routerKeyOf(d)).Pending, Device: d, HasOwnCred: w.vault.Has("dev:" + d.ID), HostKeyChanged: w.pl.hostKeys.Changed(d.ID)}
 		if bl := w.pl.ListBackups(d.ID); len(bl) > 0 {
 			x.Backups, x.LastBackup = len(bl), bl[0].Time
 		}

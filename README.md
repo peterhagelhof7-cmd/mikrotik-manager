@@ -7,6 +7,8 @@ Docker-Container (z. B. Synology).
 
 - **Übersicht:** Modell, RouterOS, Firmware, WLAN-Paket, Laufzeit, API-Status,
   WLAN-Clients je Gerät und über alle Geräte (SSID, Band, Signal, Rate)
+- **Benutzer je Gerät:** lokale Benutzer auf der Detailseite ansehen und ihr Passwort setzen
+- **WLAN-Infopage:** A4-Seite mit Name, Passwort und QR-Code je WLAN
 - **Neustart-Routine:** gewählte Geräte zur festen Zeit nacheinander neu starten, nie zwei gleichzeitig, Abbruch beim ersten Fehler;
 - **Updates:** RouterOS und RouterBOARD-Firmware, Neustart – nacheinander, mit Backup vorab;
   **automatisch zu einer festen Zeit** (Wochentage wählbar, Firmware per eigenem Haken)

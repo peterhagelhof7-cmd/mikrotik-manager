@@ -75,6 +75,7 @@ type RouterCfg struct {
 	Ports   []RouterPort `json:"ports"`
 	Nets    []RouterNet  `json:"nets"`
 	Updated time.Time    `json:"updated,omitempty"`
+	Pending bool         `json:"pending,omitempty"` // gespeichert, aber noch nicht auf dem Gerät
 }
 
 var routerMu sync.Mutex
@@ -119,9 +120,13 @@ func (p *Poller) SaveRouter(key string, c RouterCfg) (RouterCfg, error) {
 	if err := validRouter(&c); err != nil {
 		return c, err
 	}
+	m := p.routerAll()
+	old := m[key]
+	c.Pending = old.Pending || routerHash(old, nil) != routerHash(c, nil)
 	for i := range c.Ports {
 		x := &c.Ports[i]
 		if x.Secret != "" {
+			c.Pending = true
 			if err := p.vault.Set(routerSecretKey(key, x.Name), Cred{User: x.User, Password: x.Secret}); err != nil {
 				return c, err
 			}
@@ -129,13 +134,28 @@ func (p *Poller) SaveRouter(key string, c RouterCfg) (RouterCfg, error) {
 		}
 	}
 	c.Updated = time.Now()
-	m := p.routerAll()
 	m[key] = c
+	return c, p.writeRouter(m)
+}
+
+func (p *Poller) writeRouter(m map[string]RouterCfg) error {
 	b, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
-		return c, err
+		return err
 	}
-	return c, writeFileAtomic(p.routerPath(), b, 0o600)
+	return writeFileAtomic(p.routerPath(), b, 0o600)
+}
+
+// routerApplied: Das Gerät entspricht der gespeicherten Konfiguration.
+func (p *Poller) routerApplied(key string) {
+	routerMu.Lock()
+	defer routerMu.Unlock()
+	m := p.routerAll()
+	if c, ok := m[key]; ok && c.Pending {
+		c.Pending = false
+		m[key] = c
+		p.writeRouter(m)
+	}
 }
 
 // --- Prüfung ---
@@ -467,8 +487,10 @@ func routerWanScript(b *strings.Builder, x RouterPort, secret string, dist int) 
 		}
 		if x.APN != "" {
 			b.WriteString(try("/interface lte apn set [find name=\"default\"] apn=" + q(x.APN)))
+			b.WriteString(try("/interface lte apn set [find name=\"default\"] use-network-apn=no")) // eigene Zeile: nicht jedes Modem kennt den Wert
 		} else {
 			b.WriteString(try("/interface lte apn unset [find name=\"default\"] value-name=apn"))
+			b.WriteString(try("/interface lte apn set [find name=\"default\"] use-network-apn=yes"))
 		}
 		fmt.Fprintf(b, "/interface lte apn set [find name=\"default\"] add-default-route=yes default-route-distance=%d use-peer-dns=yes\n", dist)
 	}
@@ -477,7 +499,7 @@ func routerWanScript(b *strings.Builder, x RouterPort, secret string, dist int) 
 
 // routerHash ist der Stand von Konfiguration und Geheimnissen.
 func routerHash(c RouterCfg, secrets map[string]string) string {
-	c.Updated = time.Time{}
+	c.Updated, c.Pending = time.Time{}, false
 	b, _ := json.Marshal(c)
 	keys := make([]string, 0, len(secrets))
 	for k := range secrets {
@@ -801,10 +823,15 @@ func (p *Poller) planRouter(ctx context.Context, cl *routeros.Client, id string)
 	if err != nil {
 		return pl, err
 	}
+	var lte []string
 	if len(st) > 0 && strings.Contains(st[0]["source"], hash) && !missing {
-		pl.Noop = true
-		pl.Steps = []string{"Das Gerät entspricht der Router-Konfiguration – nichts zu tun"}
-		return pl, nil
+		// Der Stand sagt nur, was ausgerollt wurde. Abgelehnte Werte zeigt erst das Gerät selbst.
+		if lte = readRouterLte(ctx, cl, c, secrets); len(lte) == 0 {
+			p.routerApplied(key)
+			pl.Noop = true
+			pl.Steps = []string{"Das Gerät entspricht der Router-Konfiguration – nichts zu tun"}
+			return pl, nil
+		}
 	}
 	bridge := "bridge"
 	if l, err := printAll(ctx, cl, "/interface/bridge/print", "=.proplist=name"); err == nil && len(l) > 0 {
@@ -822,7 +849,7 @@ func (p *Poller) planRouter(ctx context.Context, cl *routeros.Client, id string)
 		}
 		return n
 	}
-	pl.Steps = append(routerSteps(c), fmt.Sprintf("Vorher ein Backup auf den Manager und als Rückweg auf das Gerät. Ersetzt werden: %d Adressen, %d DHCP-Server, %d NAT-Regeln, %d Firewall-Regeln",
+	pl.Steps = append(append(lte, routerSteps(c)...), fmt.Sprintf("Vorher ein Backup auf den Manager und als Rückweg auf das Gerät. Ersetzt werden: %d Adressen, %d DHCP-Server, %d NAT-Regeln, %d Firewall-Regeln",
 		count("/ip/address/print"), count("/ip/dhcp-server/print"), count("/ip/firewall/nat/print"), count("/ip/firewall/filter/print")))
 	pl.Warn = append(pl.Warn, "Die Verbindung zum Router und das Netz dahinter sind beim Ausrollen kurz weg.",
 		"Geräte hinter dem Router behalten ihre alte Adresse, bis ihre DHCP-Lease erneuert wird. Ein kurzes Ziehen des Kabels oder ein Neustart beschleunigt das.")
@@ -838,6 +865,79 @@ func (p *Poller) planRouter(ctx context.Context, cl *routeros.Client, id string)
 	}
 	pl.Apply = routerScript(c, secrets, bridge) + "/system script add name=" + q(routerState) + " comment=" + q(routerComment) + " source=" + q("# "+hash) + "\n"
 	return pl, nil
+}
+
+// pinRejected: Der Wert kommt aus dem LTE-Monitor. Unbekannte Werte gelten nicht als Fehler,
+// ein falscher Treffer würde ein funktionierendes Ausrollen zurückrollen.
+func pinRejected(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" || s == "ok" || strings.HasPrefix(s, "no ") {
+		return false
+	}
+	for _, w := range []string{"pin", "puk", "locked", "password"} {
+		if strings.Contains(s, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// routerLteProblems vergleicht APN und PIN mit dem, was das Gerät meldet. Felder, die das
+// Gerät nicht meldet, gelten nicht als Fehler.
+func routerLteProblems(c RouterCfg, secrets map[string]string, apn, ifs map[string]string, mon map[string]map[string]string) []string {
+	var out []string
+	for _, x := range c.Ports {
+		if x.Type != "wwan" || (x.Role != "wan" && x.Role != "backup") {
+			continue
+		}
+		if x.APN != "" {
+			if v, ok := apn["apn"]; ok && v != x.APN {
+				out = append(out, fmt.Sprintf("%s: Am Gerät steht APN %q statt %q", x.Name, v, x.APN))
+			}
+			if apn["use-network-apn"] == "true" {
+				out = append(out, x.Name+": Das Modem nimmt den APN aus dem Mobilfunknetz, der eingetragene wirkt nicht")
+			}
+			if v := ifs[x.Name]; v != "" && !strings.Contains(v, "default") {
+				out = append(out, fmt.Sprintf("%s: Die Schnittstelle nutzt das APN-Profil %q, der Manager setzt nur default", x.Name, v))
+			}
+		}
+		if secrets[x.Name] != "" {
+			if v := firstNonEmpty(mon[x.Name]["sim-status"], mon[x.Name]["pin-status"]); pinRejected(v) {
+				out = append(out, fmt.Sprintf("%s: Das Modem meldet %q, die PIN wurde nicht angenommen", x.Name, v))
+			}
+		}
+	}
+	return out
+}
+
+// readRouterLte liest den Stand von APN und PIN. Geht das nicht, bleibt die Prüfung stumm:
+// Über LTE kann eine Lesepanne vorkommen, ohne dass etwas an der Konfiguration falsch ist.
+func readRouterLte(ctx context.Context, cl *routeros.Client, c RouterCfg, secrets map[string]string) []string {
+	apn, ifs, mon := map[string]string{}, map[string]string{}, map[string]map[string]string{}
+	wwan := false
+	for _, x := range c.Ports {
+		if x.Type != "wwan" || (x.Role != "wan" && x.Role != "backup") {
+			continue
+		}
+		wwan = true
+		if secrets[x.Name] != "" {
+			if l, err := printAll(ctx, cl, "/interface/lte/monitor", "=numbers="+x.Name, "=once="); err == nil && len(l) > 0 {
+				mon[x.Name] = l[0]
+			}
+		}
+	}
+	if !wwan {
+		return nil
+	}
+	if l, err := printAll(ctx, cl, "/interface/lte/apn/print", "?name=default", "=.proplist=apn,use-network-apn"); err == nil && len(l) > 0 {
+		apn = l[0]
+	}
+	if l, err := printAll(ctx, cl, "/interface/lte/print", "=.proplist=name,apn-profiles"); err == nil {
+		for _, x := range l {
+			ifs[x["name"]] = x["apn-profiles"]
+		}
+	}
+	return routerLteProblems(c, secrets, apn, ifs, mon)
 }
 
 func routerHasVLAN(c RouterCfg, v int) bool {
