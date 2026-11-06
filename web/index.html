@@ -114,6 +114,7 @@ pre.diff .add{color:#7fdca4}pre.diff .del{color:#f0a0a0}pre.diff .gap{color:var(
     <button role="tab" data-tab="tabDev" class="active" title="Zeigt die Geräteliste mit Update, Neustart, Einstellungen, WLAN und Backups.">Geräte</button>
     <button role="tab" data-tab="tabCentral" title="Zeigt die zentrale WLAN-Verwaltung: eine WLAN-Konfiguration, die auf allen ausgewählten Geräten gleich ausgerollt wird. Umschalten ändert nichts.">Zentrale WLAN-Verwaltung <span id="cBadge"></span></button>
     <button role="tab" data-tab="tabAuto" title="Zeigt die automatischen Updates: zu einer festen Zeit werden die Geräte nacheinander aktualisiert, auf Wunsch mit RouterBOARD-Firmware. Umschalten ändert nichts.">Automatische Updates <span id="aBadge"></span></button>
+    <button role="tab" data-tab="tabReb" title="Zeigt die Neustart-Routine: Der Manager startet die gewählten Geräte zur festen Zeit nacheinander neu, nie zwei gleichzeitig. Umschalten ändert nichts.">Neustarts <span id="rbBadge"></span></button>
     <button role="tab" data-tab="tabRouter" title="Wählt das Gerät, das Router ist, und stellt Ports und Netzwerke ein. Umschalten ändert nichts.">Router</button>
     <button role="tab" data-tab="tabNet" title="Zeigt das Netzwerk als Baum: Wurzel ist der Router oder der zentrale Switch, darunter je Port die verbundenen MAC-Adressen (mit IP und Hostname) und die weiteren Geräte. Nur lesend.">Netzwerk</button>
     <button role="tab" data-tab="tabCloud" title="Zieht verwaltete Geräte mit einem Mehrfach-Code in die MikroTik-Manager Cloud um. Umschalten ändert nichts.">Cloud-Umzug</button>
@@ -201,6 +202,29 @@ pre.diff .add{color:#7fdca4}pre.diff .del{color:#f0a0a0}pre.diff .gap{color:var(
     </div>
     <div class="card"><h3>Stand der Geräte</h3><div class="hint">laut letzter Abfrage; die genaue Prüfung macht der Update-Lauf selbst</div><div class="wrap" id="auState" style="margin-top:8px"></div></div>
     <div class="card" id="auLast" hidden></div>
+  </div>
+  <div id="tabReb" hidden>
+    <div class="card" id="rbNone" hidden><h3>Neustart-Routine</h3><div class="hint">Die Routine gilt je Standort – bitte oben einen Kunden und einen Standort wählen (oder „ohne Standort“).</div></div>
+    <div id="rbBody">
+    <div class="card">
+      <h3>Neustart-Routine <span class="mute" id="rbWhere" style="font-weight:normal"></span></h3>
+      <div class="hint">Zur eingestellten Zeit startet der Manager die gewählten Geräte nacheinander neu: unten im Netz zuerst, Router und zentrale Switches zuletzt. Vor jedem Neustart müssen alle Geräte per API antworten. Kommt ein Gerät nicht zurück oder fehlt eines, bricht der Lauf ab und kein weiteres Gerät wird angefasst. Der Manager löst die Neustarts aus; ist er zur Zeit des Termins nicht erreichbar, fällt der Lauf aus.</div>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:10px;color:var(--fg)"><input type="checkbox" id="rbEnabled" style="width:auto" title="Schaltet die Routine ein. Wird erst mit „Speichern“ übernommen."><b>aktiviert</b></label>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;margin-top:8px">
+        <div><label for="rbTime">Uhrzeit</label><input type="time" id="rbTime" style="width:auto" title="Uhrzeit (Ortszeit des Managers), zu der die Routine startet. Empfohlen: nachts, nicht gleichzeitig mit Backups und Updates."></div>
+        <div><label>Wochentage</label><div id="rbDays" style="display:flex;gap:10px;flex-wrap:wrap"></div></div>
+      </div>
+      <label style="margin-top:10px">Geräte <span class="hint">(keines gewählt = keine Neustarts)</span></label>
+      <div id="rbDevices"></div>
+      <div class="btns" style="justify-content:flex-start;align-items:center">
+        <button class="primary" id="rbSave" title="Speichert die Einstellung. Ändert nichts an den Geräten.">Speichern</button>
+        <button id="rbRun" title="Startet die gespeicherte Routine sofort (nach Rückfrage): Die gewählten Geräte starten nacheinander neu.">Jetzt ausführen</button>
+        <span class="hint" id="rbMsg"></span>
+      </div>
+    </div>
+    <div class="card"><h3>Reihenfolge</h3><div class="hint">für die gespeicherte Auswahl, laut Netzwerk-Baum; der Lauf liest den Baum neu</div><div id="rbOrder" style="margin-top:8px"></div></div>
+    <div class="card" id="rbLast" hidden></div>
+    </div>
   </div>
   <div id="tabCentral" hidden>
     <div class="card">
@@ -780,6 +804,7 @@ document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tabs [data-tab]').forEach(x => { x.classList.toggle('active', x === b); $('#' + x.dataset.tab).hidden = x !== b; });
   if (b.dataset.tab === 'tabCentral' && !document.querySelector('#cNets tr') && central) renderCentral(central);
   if (b.dataset.tab === 'tabAuto') { loadAuto(); renderAutoState(); }
+  if (b.dataset.tab === 'tabReb') loadReboot(false, true);
   if (b.dataset.tab === 'tabRouter') loadRouter();
 });
 
@@ -946,6 +971,54 @@ $('#auRun').onclick = async () => {
   try { renderAuto(await api('POST', '/api/auto-update/run', {}), true); load(); } catch (e) { $('#auMsg').textContent = '❌ ' + e.message; }
 };
 
+// --- Neustart-Routine ---
+let rbPlan = null;
+const rbReady = () => typeof centralSite !== 'function' || (scope() !== null && centralSite() !== null);
+const rbQ = (more) => { const q = typeof sq === 'function' ? sq() : ''; return more ? q + (q ? '&' : '?') + more : q; };
+const rbDevs = () => (data.devices || []).filter(d => !d.cloudUrl && (typeof centralSite !== 'function' || (inScope(d) && (d.site || '') === (centralSite() || '')))).sort((x, y) => (x.identity || '').localeCompare(y.identity || ''));
+function renderReboot(r, keepForm) {
+  rbPlan = r;
+  $('#rbBadge').innerHTML = r.running ? '<span class="badge b-warn">läuft</span>' : r.enabled ? '<span class="badge b-ok">aktiv</span>' : '';
+  if (typeof scopeLabel === 'function') $('#rbWhere').textContent = [scopeLabel(), siteLabel()].filter(Boolean).map(x => '· ' + x).join(' ');
+  if (!keepForm) {
+    $('#rbEnabled').checked = r.enabled; $('#rbTime').value = r.time;
+    $('#rbDays').innerHTML = DAYS.map(([d, l]) => `<label style="display:flex;gap:4px;align-items:center;margin:0;color:var(--fg)"><input type="checkbox" data-rday="${d}" ${(r.days || []).includes(d) ? 'checked' : ''} style="width:auto" title="Routine am ${l} ausführen.">${l}</label>`).join('');
+    $('#rbDevices').innerHTML = rbDevs().map(d => `<label style="display:flex;gap:8px;align-items:center;color:var(--fg);margin:4px 0"><input type="checkbox" data-rdev="${esc(d.id)}" ${(r.devices || []).includes(d.id) ? 'checked' : ''} style="width:auto" title="Haken = dieses Gerät startet in der Routine neu.">${esc(d.identity)}</label>`).join('') || '<div class="hint">keine Geräte</div>';
+  }
+  const next = r.next && !r.next.startsWith('0001') ? new Date(r.next).toLocaleString('de-DE', {weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'}) : null;
+  $('#rbMsg').textContent = r.running ? 'Routine läuft – Fortschritt oben in der Statusleiste' : r.enabled ? `nächster Lauf: ${next || '–'}` : 'nicht aktiviert';
+  $('#rbRun').disabled = !!r.running;
+  $('#rbOrder').innerHTML = (r.order || []).map((s, i) => `<div>${i + 1}. <b>${esc(s.identity)}</b>${s.behind && s.behind.length ? ` <span class="badge b-warn">nimmt ${s.behind.length} mit</span> <span class="mute">${esc(s.behind.join(', '))} gehen dabei mit offline</span>` : ''}</div>`).join('') || '<div class="hint">keine Geräte gewählt</div>';
+  $('#rbLast').hidden = !(r.lastRun && !r.lastRun.startsWith('0001'));
+  if (!$('#rbLast').hidden) {
+    $('#rbLast').innerHTML = `<h3>Letzter Lauf: ${new Date(r.lastRun).toLocaleString('de-DE')} (${esc(r.lastReason || '')})</h3>`
+      + (r.lastResults || []).map(x => `<div>${x.ok ? '<span class="badge b-ok">ok</span>' : '<span class="badge b-bad">Fehler</span>'} <b>${esc(x.identity)}</b> <span class="mute">${esc(x.msg)}</span></div>`).join('')
+      + (r.lastNote ? `<div class="hint" style="margin-top:6px">${esc(r.lastNote)}</div>` : '');
+  }
+}
+async function loadReboot(keepForm, live) {
+  const ok = rbReady();
+  $('#rbNone').hidden = ok; $('#rbBody').hidden = !ok;
+  if (!ok) { rbPlan = null; $('#rbBadge').innerHTML = ''; return; }
+  try {
+    const f = await fetch('/api/reboot-plan' + rbQ(live ? 'live=1' : ''), {cache: 'no-store'});
+    if (!f.ok) throw new Error(await f.text());
+    renderReboot(await f.json(), keepForm);
+  } catch (e) { $('#rbMsg').textContent = 'Laden fehlgeschlagen: ' + e.message; }
+}
+$('#rbSave').onclick = async () => {
+  const body = {enabled: $('#rbEnabled').checked, time: $('#rbTime').value,
+    days: [...document.querySelectorAll('#rbDays [data-rday]')].filter(i => i.checked).map(i => +i.dataset.rday),
+    devices: [...document.querySelectorAll('#rbDevices [data-rdev]')].filter(i => i.checked).map(i => i.dataset.rdev)};
+  try { renderReboot(await api('POST', '/api/reboot-plan' + rbQ(), body)); flash('gespeichert'); } catch (e) { $('#rbMsg').textContent = '❌ ' + e.message; }
+};
+$('#rbRun').onclick = async () => {
+  const l = (rbPlan && rbPlan.order || []).map((s, i) => `${i + 1}. ${s.identity}${s.behind && s.behind.length ? ` (nimmt mit: ${s.behind.join(', ')})` : ''}`).join('\n');
+  if (!l) { $('#rbMsg').textContent = '❌ kein Gerät gespeichert'; return; }
+  if (!confirm(`Jetzt nacheinander neu starten (gespeicherte Einstellung)?\n\n${l}`)) return;
+  try { renderReboot(await api('POST', '/api/reboot-plan/run' + rbQ(), {}), true); load(); } catch (e) { $('#rbMsg').textContent = '❌ ' + e.message; }
+};
+
 // --- WLAN im ganzen Netz ---
 async function netWlanDialog() {
   const devs = (data.devices || []).filter(d => d.apiStatus === 'ok' && d.wirelessPkg);
@@ -1081,6 +1154,7 @@ function render() {
   if (detailId !== null) renderDetail();
   if ($('#aDlg').open) renderAllClients();
   if (!$('#tabAuto').hidden) { renderAutoState(); if (auto && auto.running) loadAuto(true); }
+  if (!$('#tabReb').hidden && rbPlan && rbPlan.running) loadReboot(true);
   const q = $('#q').value.toLowerCase();
   const ds = data.devices || [];
   const list = ds.filter(d => !q || JSON.stringify(d).toLowerCase().includes(q));
@@ -1268,11 +1342,11 @@ $('#pwDlg').onclose = async () => {
 loadMgr();
 $('#discBtn').onclick = async () => { await api('POST', '/api/discover'); flash('Suche läuft …'); setTimeout(load, 4000); };
 $('#q').oninput = render;
-load().then(() => { loadCentral(); loadAuto(); });
+load().then(() => { loadCentral(); loadAuto(); loadReboot(); });
 // solange ein Job läuft, öfter aktualisieren
 // --- Detailseite eines Geräts (#dev/<id>) ---
 let detailId = null, detailTimer = null, detailCache = {};
-const TAB_IDS = ['tabNet', 'tabDev', 'tabCentral', 'tabAuto', 'tabTen', 'tabSys', 'tabBak', 'tabUsr'];
+const TAB_IDS = ['tabNet', 'tabDev', 'tabCentral', 'tabAuto', 'tabReb', 'tabTen', 'tabSys', 'tabBak', 'tabUsr'];
 function detailDev() { return (data.devices || []).find(d => d.id === detailId); }
 function route() {
   const m = location.hash.match(/^#dev\/(.+)$/);

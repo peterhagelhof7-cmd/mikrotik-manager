@@ -7,6 +7,7 @@ Docker-Container (z. B. Synology).
 
 - **Übersicht:** Modell, RouterOS, Firmware, WLAN-Paket, Laufzeit, API-Status,
   WLAN-Clients je Gerät und über alle Geräte (SSID, Band, Signal, Rate)
+- **Neustart-Routine:** gewählte Geräte zur festen Zeit nacheinander neu starten, nie zwei gleichzeitig, Abbruch beim ersten Fehler;
 - **Updates:** RouterOS und RouterBOARD-Firmware, Neustart – nacheinander, mit Backup vorab;
   **automatisch zu einer festen Zeit** (Wochentage wählbar, Firmware per eigenem Haken)
 - **Backups** auf den Manager: jede Nacht, vor jeder Änderung und auf Knopfdruck

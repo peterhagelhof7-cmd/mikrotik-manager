@@ -619,3 +619,14 @@ Jede Aktion hat zusätzlich ein Protokoll in der Gerätezeile („Protokoll“ a
 - IP-Adressen der WLAN-Clients beim `wifi`-Paket nur, wenn der Access Point sie in
   seiner ARP-Tabelle hat.
 - CAPsMAN-verwaltete Geräte werden beim WLAN nicht angefasst.
+
+## Neustart-Routine
+
+Reiter **Neustarts**: Geräte, Wochentage und Uhrzeit wählen, speichern, aktivieren. Ohne gewähltes Gerät passiert nichts.
+
+- Reihenfolge: unten im Netzwerk-Baum zuerst, Wurzel zuletzt. Der Reiter zeigt sie an.
+- Vor jedem Neustart fragt der Manager alle Geräte direkt ab. Fehlt eines, wartet er 5 Minuten und bricht dann ab.
+- Nach jedem Gerät wartet er auf die Rückkehr (bis 10 Minuten) und 1 Minute Ruhezeit. Kommt ein Gerät nicht zurück, bleibt der Rest unberührt.
+- Ein nicht gewähltes Gerät, das schon vor dem Lauf offline ist, blockiert nicht und steht als Hinweis beim Ergebnis. Ein gewähltes blockiert.
+- Grenze: Ein Switch oder Router nimmt die Geräte dahinter mit offline. Das lässt sich nicht vermeiden, der Reiter weist darauf hin.
+- Fällt der Manager zum Termin aus, entfällt der Lauf, er wird nicht nachgeholt.

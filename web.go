@@ -109,6 +109,12 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 		}
 		writeJSON(rw, w.pl.AutoUpdateView())
 	})))
+	area := func(h func(http.ResponseWriter, *http.Request, rebootArea)) http.Handler {
+		return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { h(rw, r, rebootArea{}) })
+	}
+	mux.Handle("GET /api/reboot-plan", w.auth(area(w.rebootGet)))
+	mux.Handle("POST /api/reboot-plan", w.auth(w.rec("Neustart-Routine gespeichert", area(w.rebootSave))))
+	mux.Handle("POST /api/reboot-plan/run", w.auth(w.rec("Neustart-Routine gestartet", area(w.rebootRun))))
 	mux.Handle("GET /api/central", w.auth(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { writeJSON(rw, w.pl.Central()) })))
 	mux.Handle("POST /api/central", w.auth(http.HandlerFunc(w.saveCentral)))
 	mux.Handle("POST /api/central/preview", w.auth(http.HandlerFunc(w.centralPreview)))

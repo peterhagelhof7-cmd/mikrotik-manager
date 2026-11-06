@@ -248,32 +248,36 @@ func (p *Poller) startJobs(ctx context.Context, ids []string, kind string, fn fu
 			continue
 		}
 		out = append(out, Result{ID: id, Identity: d.Identity, OK: true, Msg: "eingeplant"})
-		go func() {
-			p.jobs.serial.Lock()
-			defer p.jobs.serial.Unlock()
-			name := d.Identity
-			var err error
-			func() {
-				// Ein Programmfehler in einem Job darf nicht den ganzen Dienst beenden.
-				defer func() {
-					if r := recover(); r != nil {
-						err = fmt.Errorf("interner Fehler: %v", r)
-					}
-				}()
-				err = fn(ctx, id, x)
-			}()
-			if err != nil {
-				p.jobs.step(x, name, "FEHLER: %v", err)
-			}
-			p.jobs.finish(x, err == nil)
-			// Erfolgreiche Backups (jede Nacht) nicht in den Verlauf – sie stehen bei den Backups.
-			if kind != "backup" || err != nil {
-				p.hist.Add(id, "Manager", jobKindLabel(kind)+" beendet", x.Step, err)
-			}
-			p.Trigger(id)
-		}()
+		go p.runJob(ctx, id, d.Identity, x, kind, fn)
 	}
 	return out
+}
+
+// runJob führt einen angelegten Job aus (nacheinander mit allen anderen Jobs)
+// und liefert dessen Fehler.
+func (p *Poller) runJob(ctx context.Context, id, name string, x *Job, kind string, fn func(context.Context, string, *Job) error) error {
+	p.jobs.serial.Lock()
+	defer p.jobs.serial.Unlock()
+	var err error
+	func() {
+		// Ein Programmfehler in einem Job darf nicht den ganzen Dienst beenden.
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("interner Fehler: %v", r)
+			}
+		}()
+		err = fn(ctx, id, x)
+	}()
+	if err != nil {
+		p.jobs.step(x, name, "FEHLER: %v", err)
+	}
+	p.jobs.finish(x, err == nil)
+	// Erfolgreiche Backups (jede Nacht) nicht in den Verlauf – sie stehen bei den Backups.
+	if kind != "backup" || err != nil {
+		p.hist.Add(id, "Manager", jobKindLabel(kind)+" beendet", x.Step, err)
+	}
+	p.Trigger(id)
+	return err
 }
 
 func (p *Poller) doUpdate(ctx context.Context, id string, x *Job) error {

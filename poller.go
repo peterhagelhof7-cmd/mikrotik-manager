@@ -34,6 +34,7 @@ type Poller struct {
 	ctx        context.Context // Dienst-Kontext für Hintergrund-Jobs
 	wc         clientCache     // WLAN-Clients je Gerät (nur im Speicher)
 	auto       autoUpdater     // Zustand der automatischen Updates
+	reboots    rebootRuns      // laufende Neustart-Routinen
 }
 
 func newPoller(cfg Config, st *Store, v *Vault) *Poller {
