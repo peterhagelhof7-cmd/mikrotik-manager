@@ -594,3 +594,12 @@ Monats; nur erfassen, keine Schwelle; mm und Cloud; noch kein Testgerät.
   bleibt deshalb auch ausgenommen. Das ist die sichere Seite.
 - **„Zuletzt verbunden mit“ steht am Gerät,** weil ein offline-Gerät nichts mehr meldet.
 
+## 2026-11-06 – Zurücksetzen, Vergessen, Dateien, IP-Anzeige
+
+- **Vergessen nur ohne Verbindung.** Erreichbare Geräte werden zurückgesetzt, danach vergisst der
+  Manager sie. Die Prüfung läuft beim Auslösen, abgelehnter Login und abgewiesener Port zählen als online.
+- **Zurücksetzen löscht auch den Namen** und die eigenen Dateien. Liegengebliebene `mm-undo`-Backups
+  sind unverschlüsselt. Das Skript liegt kurz im Datenverzeichnis, das Container-Image hat kein `/tmp`.
+- **Geschützt ist, was gerade gebraucht wird, nicht alles mit `mm-`.** Ein `mm-undo-<tag>`-Backup
+  zählt als benötigt, solange das Skript `mm-undo-<tag>` steht; dann wartet ein Wächter darauf.
+- **Von der Cloud verwaltete Geräte** lassen sich lokal weder zurücksetzen noch Dateien löschen.

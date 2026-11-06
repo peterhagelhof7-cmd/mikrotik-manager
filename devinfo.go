@@ -27,10 +27,14 @@ type DeviceHistItem struct {
 
 // DeviceFile ist eine Datei auf dem Gerät.
 type DeviceFile struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
-	Size int64  `json:"size"`
-	Time string `json:"time,omitempty"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Size      int64  `json:"size"`
+	Time      string `json:"time,omitempty"`
+	Protected bool   `json:"protected,omitempty"` // nicht löschbar, Grund in Why
+	Why       string `json:"why,omitempty"`
+	Leftover  bool   `json:"leftover,omitempty"` // Rest vom Manager, wird nicht mehr gebraucht
+	rosID     string
 }
 
 func (p *Poller) DeviceHistory(ctx context.Context, id string) ([]DeviceHistItem, error) {
@@ -60,22 +64,7 @@ func (p *Poller) DeviceFiles(ctx context.Context, id string) ([]DeviceFile, erro
 		return nil, err
 	}
 	defer cl.Close()
-	l, err := printAll(ctx, cl, "/file/print", "=.proplist=name,type,size,creation-time,last-modified")
-	if err != nil {
-		return nil, err
-	}
-	out := make([]DeviceFile, 0, len(l))
-	for _, m := range l {
-		f := DeviceFile{Name: m["name"], Type: m["type"], Time: m["last-modified"]}
-		if f.Time == "" {
-			f.Time = m["creation-time"]
-		}
-		// v6 liefert "12.5KiB", v7 Bytes
-		f.Size = parseSize(m["size"])
-		out = append(out, f)
-	}
-	sort.Slice(out, func(a, b int) bool { return out[a].Name < out[b].Name })
-	return out, nil
+	return p.readDeviceFiles(ctx, cl, id)
 }
 
 func parseSize(s string) int64 {

@@ -94,7 +94,9 @@ Geräte werden alle 5 Minuten (`POLL_INTERVAL`) ausgelesen, WLAN-Clients jede Mi
 Klick auf den **Namen** in der Geräteliste öffnet die Detailseite (Adresse `#dev/<Geräte-ID>`,
 lässt sich als Lesezeichen speichern; „← Geräte“ oder Zurück im Browser führt zur Liste).
 
-- **Kopf:** IP, MAC, Modell, Seriennummer, RouterOS/Kanal, Firmware, Laufzeit, CPU/RAM.
+- **Kopf:** IP, MAC, Modell, Seriennummer, RouterOS/Kanal, Firmware, Laufzeit, CPU/RAM, Flash-Belegung.
+  Darunter alle IPv4- und IPv6-Adressen des Geräts mit Schnittstelle, auch dynamische und deaktivierte.
+- **Dateien:** Dateien des Geräts markieren und mit **Markierte löschen** entfernen, siehe unten.
 - **Standort:** freier Text (z. B. „Technikraum EG, Rack 2“), nur auf dem Manager
   gespeichert, erscheint auch unter dem Namen in der Geräteliste.
 - **Einstellungen & Aktionen:** dieselben Knöpfe wie in der Liste (Einstellungen, WLAN,
@@ -276,6 +278,42 @@ Umstellung auf `wifi`), lehnt der Manager ab, weil das WLAN danach aus wäre.
 Von Hand geht es auch: `.backup`-Datei herunterladen, in WinBox/WebFig unter *Files*
 hochladen → *System → Backup → Restore*. Ein Backup gehört zu genau diesem Gerät
 (enthält MAC-Adressen).
+
+**Zurücksetzen** ist der Weg, ein erreichbares Gerät aus dem Manager zu nehmen (Knopf
+**Einstellungen** → „Zurücksetzen …“, Gerätename zur Bestätigung eintippen): Backup
+`…-vor-reset` auf den Manager, dann `/system reset-configuration no-defaults=yes` mit
+eigenem Skript danach. Zustand des Geräts danach:
+
+- Konfiguration gelöscht, auch Verwaltungsbenutzer, WLAN und Meshlink
+- alle Ethernet- und WLAN-Schnittstellen in `bridge`
+- DHCP-Client auf `bridge`
+- WLAN-Schnittstellen aus, keine SSID
+- eigene Dateien (`mm-undo-…`, `mm-reset.rsc`) entfernt
+- `admin` ohne Passwort
+- Gerätename gelöscht, RouterOS vergibt seinen Werksnamen (beim wAP ac: `wAP`)
+
+Der Manager vergisst das Gerät danach, Backups bleiben auf dem Manager. Scheitert das
+Zurücksetzen, bleibt das Gerät unverändert in der Liste. Im selben Netz findet die
+Gerätesuche es wieder und zeigt es als neues Gerät. Von der Cloud verwaltete Geräte lassen
+sich hier nicht zurücksetzen.
+
+**Vergessen** steht in der Geräteliste nur bei Geräten, die nicht erreichbar sind. Der Manager
+prüft beim Auslösen selbst noch einmal: Antwortet das Gerät (Login klappt, Login abgelehnt,
+API-Port abgewiesen), lehnt er ab. Vergessen löscht Zugangsdaten, SSH-Hostkey, Verlauf und
+LTE-Einstellungen im Manager, Backups bleiben. Am Gerät ändert sich nichts.
+
+### Dateien auf dem Gerät
+
+Die Detailseite listet die Dateien des Geräts. Der Manager liest die Liste beim Löschen neu und
+prüft den Schutz serverseitig. Rückgängig machen lässt es sich nicht.
+
+| Anzeige | Bedeutung | Löschbar |
+|---|---|---|
+| **geschützt** | Datenträger und Ordner, Rückweg einer unbestätigten Änderung, Dateien einer laufenden Aktion | nein |
+| **Rest vom Manager** | alte `mm-…`-Datei, die nicht mehr gebraucht wird, etwa `mm-undo-…backup` | ja |
+| ohne Hinweis | Dateien anderen Ursprungs, auch `.npk`-Pakete | ja |
+
+Bei von der Cloud verwalteten Geräten bleibt die Liste reine Anzeige.
 
 ### Einstellungen
 

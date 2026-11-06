@@ -274,6 +274,11 @@ pre.diff .add{color:#7fdca4}pre.diff .del{color:#f0a0a0}pre.diff .gap{color:var(
     <div class="hint">SNMP v2c mit Community <span class="mono">public</span>, nur lesend, auf allen erreichbaren Geräten einschalten. Je Gerät mit Backup und Wächter, nacheinander. Einzeln ein- und ausschalten: „Einstellungen“ in der Zeile.</div>
     <div class="btns" style="justify-content:flex-start"><button id="snmpAll" title="Fragt nach und schaltet SNMP dann auf jedem erreichbaren Gerät ein. Fortschritt steht oben.">SNMP auf allen Geräten einschalten</button></div>
   </div>
+  <div class="card" style="margin:0 0 10px">
+    <h3>Zurücksetzen und aus der Verwaltung nehmen</h3>
+    <div class="hint">Sichert die Konfiguration auf den Manager und setzt das Gerät dann zurück: alle Ports in einer Bridge, DHCP-Client, Benutzer <span class="mono">admin</span> <b>ohne Passwort</b>, Name wieder der Werksname. Alles andere ist danach weg – auch der Verwaltungsbenutzer. Der Manager entfernt das Gerät aus seiner Liste; die Backups bleiben auf dem Manager.</div>
+    <div class="btns" style="justify-content:flex-start"><button id="sReset" title="Nach Rückfrage (Gerätename eintippen): Backup auf den Manager, dann Zurücksetzen mit Neustart. Das Gerät ist danach nicht mehr im Manager.">Zurücksetzen …</button></div>
+  </div>
   <div class="card" id="noCred" hidden>
     <h3>Noch keine Standard-Zugangsdaten</h3>
     <div class="hint">Ohne Zugangsdaten wird nur <span class="mono">admin</span> ohne Passwort versucht (Werkszustand älterer Geräte).
@@ -447,7 +452,7 @@ function row(d) {
     <td><button class="small" data-upd="${esc(d.id)}" ${lock(d)} title="Nach Rückfrage: speichert ein Backup auf dem Manager, installiert eine neuere RouterOS-Version (falls vorhanden) und danach die RouterBOARD-Firmware. Das Gerät startet dabei ein- bis zweimal neu (je ca. 1–2 Minuten offline).">Update</button> <button class="small" data-reboot="${esc(d.id)}" ${lock(d)} title="Nach Rückfrage: startet das Gerät neu (ca. 1–2 Minuten offline) und prüft, dass es wieder erreichbar ist.">Neustart</button>
       <button class="small" data-cred="${esc(d.id)}" title="Öffnet einen Dialog für eigene Zugangsdaten nur dieses Geräts. Ändert nichts auf dem Gerät.">Login</button> <button class="small" data-poll="${esc(d.id)}" title="Liest das Gerät sofort neu aus (Version, Firmware, Status). Ändert nichts auf dem Gerät.">↻</button>
       <div style="margin-top:4px"><button class="small" data-set="${esc(d.id)}" ${lock(d)} title="Öffnet die Einstellungen: Name setzen, alle Ports in die Bridge, DHCP-Client auf der Bridge (WLAN: eigener Knopf). Ändert erst nach Vorschau und ausdrücklichem Klick auf „Jetzt ausführen“.">Einstellungen</button> ${d.poe && wwAdmin(d) ? `<button class="small" data-poeall="${esc(d.id)}" ${lock(d)} title="Nach Rückfrage: PoE an allen versorgenden Ports nacheinander aus, 10 Sekunden warten, wieder an. Die angeschlossenen Geräte starten neu. Der Uplink bleibt ausgenommen.">PoE-Cycle</button>` : ''} ${(d.wirelessPkg || axBoard(d)) ? `<button class="small" data-wlan="${esc(d.id)}" ${lock(d)} title="Öffnet die WLAN-Übersicht dieses Geräts: SSID, Passwort und an/aus je Schnittstelle ändern; bei altem wireless-Paket zusätzlich die Umstellung auf das neue wifi-Paket. Ändert erst nach Vorschau und Klick auf „Jetzt ausführen“.">WLAN</button> ` : ''}<button class="small" data-backup="${esc(d.id)}" ${d.job && d.job.running ? 'disabled' : ''} title="Erstellt sofort ein Backup (Binär-Backup + Text-Export) und speichert es auf dem Manager. Die Kopie auf dem Gerät wird danach gelöscht. Kein Neustart, keine Änderung der Konfiguration.">Backup</button>
-      ${d.backups ? `<button class="small" data-blist="${esc(d.id)}" title="Zeigt die auf dem Manager gespeicherten Backups dieses Geräts zum Herunterladen.">${d.backups} Dateien · ${esc(ago(d.lastBackup))}</button>` : '<span class="hint">kein Backup</span>'}</div></td>
+      ${!online(d) ? `<button class="small" data-forget="${esc(d.id)}" title="Nach Rückfrage: entfernt das nicht erreichbare Gerät aus dem Manager. Am Gerät ändert sich nichts. Ein erreichbares Gerät über Einstellungen → Zurücksetzen entfernen.">Vergessen</button> ` : ''}      ${d.backups ? `<button class="small" data-blist="${esc(d.id)}" title="Zeigt die auf dem Manager gespeicherten Backups dieses Geräts zum Herunterladen.">${d.backups} Dateien · ${esc(ago(d.lastBackup))}</button>` : '<span class="hint">kein Backup</span>'}</div></td>
   </tr>`;
 }
 
@@ -476,6 +481,18 @@ function settingsDialog(d) {
     const req = {action, removeStatic: action === 'dhcp' && $('#sRemove').checked};
     const title = action === 'bridge' ? 'Alle Ports in Bridge' : 'DHCP-Client auf Bridge';
     previewChange($('#sPlan'), $('#sDlg'), d, title, req);
+  };
+  $('#sReset').onclick = async () => {
+    const want = d.identity || d.ip;
+    const typed = prompt(`${want} zurücksetzen und aus der Verwaltung nehmen?\n\nDanach: alle Ports in einer Bridge, DHCP-Client, admin ohne Passwort. WLAN, Gerätename und alle übrige Konfiguration sind weg, das Gerät verschwindet aus dem Manager (Backup bleibt).\n\nZur Bestätigung den Gerätenamen eintippen:`, '');
+    if (typed === null) return;
+    if (typed !== want) { showPlanMsg('Name stimmt nicht – nichts geändert.'); return; }
+    $('#sReset').disabled = true; showPlanMsg('sichere und setze zurück …');
+    try {
+      const r = await api('POST', `/api/devices/${encodeURIComponent(d.id)}/reset`, {confirm: typed});
+      $('#sDlg').close(); showResults(`${want} zurücksetzen`, r.results); load();
+    } catch (e) { showPlanMsg('❌ ' + e.message); }
+    $('#sReset').disabled = false;
   };
   $('#sBridgePrev').onclick = () => preview('bridge');
   $('#sDhcpPrev').onclick = () => preview('dhcp');
@@ -1287,6 +1304,13 @@ Das Gerät startet dabei ein- bis zweimal neu.`)) return;
     $('#bBody').dataset.dev = d.id;
     $('#bDlg').showModal();
   }
+  if (b.dataset.forget) {
+    const x = data.devices.find(d => d.id === b.dataset.forget);
+    if (!confirm(`${x.identity || x.ip} vergessen?\n\nDer Manager löscht die Zugangsdaten. Am Gerät ändert sich nichts. Backups bleiben.`)) return;
+    try { await api('DELETE', `/api/devices/${encodeURIComponent(x.id)}`); flash('Gerät vergessen'); load(); }
+    catch (e) { flash('❌ ' + e.message); load(); }
+    return;
+  }
   if (b.dataset.cred) credDialog(data.devices.find(d => d.id === b.dataset.cred));
   if (b.dataset.hostkey) {
     const d = dev(b.dataset.hostkey);
@@ -1406,7 +1430,7 @@ function openDetail(id) {
       <div class="card"><h3>Backups auf dem Manager</h3><div id="dBak"></div></div>
       <div class="card"><div class="dhead"><h3 style="margin:0">Dateien auf dem Gerät</h3><button class="small" data-dx="files" title="Liest die Dateiliste neu vom Gerät. Ändert nichts.">↻ neu lesen</button></div><div id="dFiles"><div class="hint">lese Dateien …</div></div></div>`;
     window.scrollTo(0, 0);
-    parentHtml = ''; loadParent(); loadPorts(); loadWan(); loadHist(); loadFiles(); loadWlan(); loadWwan(); loadUsers();
+    parentHtml = ''; ipsHtml = ''; loadParent(); loadAddrs(); loadPorts(); loadWan(); loadHist(); loadFiles(); loadWlan(); loadWwan(); loadUsers();
   }
   renderDetail();
   clearInterval(detailTimer);
@@ -1414,7 +1438,7 @@ function openDetail(id) {
   detailTimer = setInterval(() => {
     if ($('#detail').hidden || document.visibilityState !== 'visible') return;
     loadPorts(true); loadWan(true);
-    if (++ticks % 4 === 0) { loadWlan(true); loadParent(); } // WLAN jede Minute (die Clients liest der Manager ohnehin minütlich)
+    if (++ticks % 4 === 0) { loadWlan(true); loadParent(); loadAddrs(); } // WLAN jede Minute (die Clients liest der Manager ohnehin minütlich)
   }, 15000);
 }
 function closeDetail() {
@@ -1434,12 +1458,14 @@ function renderDetail() {
     ['RouterOS', esc(d.version || '') + (d.latestVersion && d.version && !d.version.startsWith(d.latestVersion) ? ` <span class="badge b-warn">→ ${esc(d.latestVersion)}</span>` : '') + `<div class="hint">Kanal ${esc(d.channel || '–')}</div>`],
     ['Firmware', d.routerboard ? esc(d.currentFirmware || '') + (d.upgradeFirmware && d.upgradeFirmware !== d.currentFirmware ? ` <span class="badge b-warn">→ ${esc(d.upgradeFirmware)}</span>` : '') : '<span class="mute">kein RouterBOARD</span>'],
     ['Laufzeit', uptime(d.uptime) || '–'], ['CPU / RAM', `${d.cpuLoad ?? '–'} % · ${d.totalMem ? Math.round((d.totalMem - d.freeMem) / d.totalMem * 100) + ' % belegt' : '–'}`],
+    ['Flash', d.totalHdd ? `${Math.round((d.totalHdd - d.freeHdd) / d.totalHdd * 100)} % belegt<div class="hint">${(d.freeHdd / 1048576).toFixed(1)} von ${(d.totalHdd / 1048576).toFixed(1)} MB frei</div>` : '–'],
     ['WLAN-Paket', esc(d.wirelessPkg || '–')], ['zuletzt gesehen', esc(ago(d.lastSeen))]];
   $('#dHead').innerHTML = `<div class="dhead"><button class="small" data-dx="back" title="Zurück zur Geräteliste.">← Geräte</button>
       <span class="dot ${online(d) ? 'on' : 'off'}"></span><h2>${esc(d.identity || d.ip)}</h2>${st}${d.hostKeyChanged ? ' <span class="badge b-bad">SSH-Schlüssel geändert</span>' : ''}</div>
     ${d.apiError ? `<div class="hint" style="color:#f0a0a0;margin-top:6px">${esc(d.apiError)}</div>` : ''}
     <div id="dParent" class="hint" style="margin-top:6px;color:var(--fg)">${parentHtml}</div>
     <div class="kv">${kv.map(([k, v]) => `<div><span>${k}</span>${v}</div>`).join('')}</div>
+    <div id="dIps">${ipsHtml}</div>
     <h3 style="margin-top:16px">Standort</h3>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="dLoc" maxlength="200" style="flex:1;min-width:220px" placeholder="z. B. Technikraum EG, Rack 2" value="${esc(d.location || '')}" title="Freier Text, wo das Gerät steht. Nur auf dem Manager gespeichert, ändert nichts am Gerät.">
       <button class="small" data-dx="loc" title="Speichert den Standort-Text auf dem Manager. Ändert nichts am Gerät.">Standort speichern</button></div>
@@ -1472,7 +1498,19 @@ function portState(p) {
   return p.poeUsed ? l + ` · PoE ${p.poeWatt ? p.poeWatt + ' W' : 'an'}` : l;
 }
 const rosTime = s => { const m = /^(\d{4})-(\d\d)-(\d\d) (.*)$/.exec(s || ''); return m ? `${m[3]}.${m[2]}.${m[1]} ${m[4]}` : (s || ''); };
-let parentHtml = '';
+let parentHtml = '', ipsHtml = '';
+async function loadAddrs() {
+  const id = detailId; if (!id) return;
+  try {
+    const r = await fetch(`/api/devices/${encodeURIComponent(id)}/addresses`, {cache: 'no-store'});
+    if (!r.ok) throw new Error(await r.text());
+    const l = await r.json();
+    if (id !== detailId) return;
+    const tag = (on, t, x) => on ? ` <span class="badge b-mute" title="${x}">${t}</span>` : '';
+    ipsHtml = l.length ? `<div class="hint" style="margin-top:10px">IP-Adressen auf dem Gerät</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:2px 16px">${l.map(a => `<div><span class="mono">${esc(a.address)}</span> <span class="mute">an</span> <span class="mono">${esc(a.interface)}</span>${tag(a.dynamic, 'dynamisch', 'Vom Gerät automatisch gesetzt, zum Beispiel per DHCP.')}${tag(a.disabled, 'aus', 'Diese Adresse ist deaktiviert.')}${tag(a.invalid, 'ungültig', 'RouterOS kann die Adresse nicht nutzen, zum Beispiel weil die Schnittstelle fehlt.')}</div>`).join('')}</div>` : '';
+    if ($('#dIps')) $('#dIps').innerHTML = ipsHtml;
+  } catch (e) { /* Infofläche, kein Grund für eine Meldung */ }
+}
 async function loadParent() {
   const id = detailId; if (!id) return;
   try {
@@ -1558,8 +1596,27 @@ async function loadFiles() {
     const fs = await r.json();
     if (id !== detailId) return;
     const size = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? (n / 1024).toFixed(1) + ' KB' : n + ' B';
-    $('#dFiles').innerHTML = fs.length ? `<div class="wrap"><table><thead><tr><th>Name</th><th>Typ</th><th>Größe</th><th>Zeit</th></tr></thead><tbody>${fs.map(f => `<tr><td class="mono">${esc(f.name)}</td><td>${esc(f.type)}</td><td>${f.type === 'directory' ? '' : size(f.size)}</td><td class="mute">${esc(f.time || '')}</td></tr>`).join('')}</tbody></table></div>
-      <div class="hint" style="margin-top:6px">Nur Anzeige. Backups holt der Manager selbst und löscht die Kopie auf dem Gerät danach.</div>` : '<div class="hint">keine Dateien</div>';
+    const dv = data.devices.find(d => d.id === id);
+    const adm = !!dv && !dv.cloudUrl;
+    const state = f => f.protected ? `<span class="badge b-mute" title="${esc(f.why)}">geschützt</span>` : f.leftover ? '<span class="badge b-warn" title="Datei vom Manager, die nicht mehr gebraucht wird. Kann gelöscht werden.">Rest vom Manager</span>' : '';
+    $('#dFiles').innerHTML = fs.length ? `<div class="wrap"><table><thead><tr>${adm ? '<th></th>' : ''}<th>Name</th><th>Typ</th><th>Größe</th><th>Zeit</th><th></th></tr></thead><tbody>${fs.map(f => `<tr>${adm ? `<td>${f.protected ? '' : `<input type="checkbox" data-fdel="${esc(f.name)}" style="width:auto" title="Zum Löschen markieren. Ändert erst etwas mit „Markierte löschen“.">`}</td>` : ''}<td class="mono">${esc(f.name)}</td><td>${esc(f.type)}</td><td>${f.type === 'directory' || f.type === 'disk' ? '' : size(f.size)}</td><td>${esc(f.time)}</td><td>${state(f)}</td></tr>`).join('')}</tbody></table></div>
+      ${adm ? '<div class="btns" style="justify-content:flex-start;margin-top:6px"><button class="small" id="dFilesDel" disabled title="Nach Rückfrage: löscht die markierten Dateien vom Gerät. Der Manager prüft den Schutz dabei noch einmal.">Markierte löschen</button></div>' : ''}
+      <div class="hint" id="dFilesMsg" style="margin-top:6px">Geschützt sind Datenträger, Ordner und Dateien, die der Manager gerade braucht. Backups holt der Manager selbst und löscht die Kopie auf dem Gerät danach.</div>` : '<div class="hint">keine Dateien</div>';
+    if (adm && fs.length) {
+      const picked = () => [...$('#dFiles').querySelectorAll('[data-fdel]:checked')].map(x => x.dataset.fdel);
+      $('#dFiles').onchange = () => { $('#dFilesDel').disabled = !picked().length; };
+      $('#dFilesDel').onclick = async () => {
+        const names = picked();
+        if (!names.length || !confirm(`${names.length} Datei(en) vom Gerät löschen?\n\n${names.join('\n')}\n\nDas lässt sich nicht rückgängig machen.`)) return;
+        $('#dFilesDel').disabled = true;
+        try {
+          const r = await api('POST', `/api/devices/${encodeURIComponent(id)}/files/delete`, {names});
+          const bad = r.results.filter(x => !x.ok);
+          await loadFiles();
+          if ($('#dFilesMsg')) $('#dFilesMsg').textContent = bad.length ? '❌ ' + bad.map(x => `${x.name}: ${x.msg}`).join('; ') : `${r.results.length} Datei(en) gelöscht.`;
+        } catch (e) { $('#dFilesMsg').textContent = '❌ ' + e.message; $('#dFilesDel').disabled = false; }
+      };
+    }
   } catch (e) { $('#dFiles').innerHTML = `<div class="hint" style="color:#f0a0a0">Dateien nicht lesbar: ${esc(e.message)}</div>`; }
 }
 function diffHtml(lines) {

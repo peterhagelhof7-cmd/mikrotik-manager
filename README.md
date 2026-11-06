@@ -7,7 +7,9 @@ Docker-Container (z. B. Synology).
 
 - **Übersicht:** Modell, RouterOS, Firmware, WLAN-Paket, Laufzeit, API-Status,
   WLAN-Clients je Gerät und über alle Geräte (SSID, Band, Signal, Rate)
-- **Detailseite je Gerät:** Ports, WLAN, Konfig-Historie, Dateien, lokale Benutzer
+- **Detailseite je Gerät:** Ports, WLAN, Konfig-Historie, lokale Benutzer, Flash-Belegung,
+  alle IP-Adressen, Dateien ansehen und löschen
+- **Zurücksetzen:** Gerät leeren und aus der Verwaltung nehmen, vorher Backup auf den Manager
 - **Netzwerk-Baum:** welche MAC an welchem Port, auch je VLAN
 - **Router:** Portrollen, WAN (DHCP, IPoE, PPPoE, WWAN), VLANs, DHCP, NAT, Firewall, Backup WAN
 - **WWAN / LTE-Router:** PIN je SIM, LAN, Volumen je Monat

@@ -157,6 +157,9 @@ func newWeb(cfg Config, st *Store, pl *Poller, md *MNDP, v *Vault, pass string, 
 	mux.Handle("GET /api/topology", w.auth(http.HandlerFunc(w.topology)))
 	mux.Handle("POST /api/topology/root", w.auth(http.HandlerFunc(w.setTopoRoot)))
 	mux.Handle("GET /api/router", w.auth(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { w.routerGet(rw, r, "") })))
+	mux.Handle("POST /api/devices/{id}/reset", w.auth(w.rec("Gerät zurückgesetzt", http.HandlerFunc(w.resetDevice))))
+	mux.Handle("POST /api/devices/{id}/files/delete", w.auth(w.rec("Dateien auf dem Gerät gelöscht", http.HandlerFunc(w.deleteDeviceFiles))))
+	mux.Handle("GET /api/devices/{id}/addresses", w.auth(http.HandlerFunc(w.deviceAddresses)))
 	mux.Handle("POST /api/devices/{id}/poe-cycle", w.auth(w.rec("PoE-Cycle gestartet", http.HandlerFunc(w.poeCycle))))
 	mux.Handle("POST /api/router", w.auth(w.rec("Router-Konfiguration gespeichert", http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { w.routerSave(rw, r, "") }))))
 	mux.Handle("POST /api/cloud-move/preview", w.auth(http.HandlerFunc(w.cloudPreview)))
@@ -616,14 +619,39 @@ func (w *web) poll(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (w *web) forget(rw http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	w.st.Delete(id)
-	w.vault.Delete("dev:" + id)
-	w.pl.hostKeys.Forget(id)
-	w.pl.hist.Forget(id)
-	w.pl.forgetWwan(id)
-	w.st.save()
+	if err := w.pl.ForgetOffline(r.Context(), r.PathValue("id")); err != nil {
+		http.Error(rw, err.Error(), http.StatusConflict)
+		return
+	}
 	writeJSON(rw, map[string]bool{"ok": true})
+}
+
+// resetDevice: Gerät zurücksetzen und aus der Verwaltung nehmen. Zur Sicherheit
+// muss der Gerätename mitgeschickt werden (in der Oberfläche eingetippt).
+func (w *web) resetDevice(rw http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Confirm string `json:"confirm"`
+	}
+	id := r.PathValue("id")
+	d, ok := w.st.Get(id)
+	if !ok {
+		http.NotFound(rw, r)
+		return
+	}
+	want := d.Identity
+	if want == "" {
+		want = d.IP
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 4096)).Decode(&req); err != nil || req.Confirm != want {
+		http.Error(rw, "Gerätename zur Bestätigung stimmt nicht", http.StatusBadRequest)
+		return
+	}
+	msg, err := w.pl.ResetDevice(r.Context(), id)
+	if err != nil {
+		writeJSON(rw, map[string]any{"results": []Result{{ID: id, Identity: d.Identity, Msg: err.Error()}}})
+		return
+	}
+	writeJSON(rw, map[string]any{"results": []Result{{ID: id, Identity: d.Identity, OK: true, Msg: msg}}})
 }
 
 // acceptHostKey übernimmt nach Rückfrage in der Oberfläche den neuen SSH-Hostkey
