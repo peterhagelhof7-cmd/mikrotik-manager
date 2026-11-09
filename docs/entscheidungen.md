@@ -603,3 +603,9 @@ Monats; nur erfassen, keine Schwelle; mm und Cloud; noch kein Testgerät.
 - **Geschützt ist, was gerade gebraucht wird, nicht alles mit `mm-`.** Ein `mm-undo-<tag>`-Backup
   zählt als benötigt, solange das Skript `mm-undo-<tag>` steht; dann wartet ein Wächter darauf.
 - **Von der Cloud verwaltete Geräte** lassen sich lokal weder zurücksetzen noch Dateien löschen.
+
+## 2026-11-09 – Versionsnummern
+
+- **Jede ausgelieferte Änderung bekommt eine neue Version,** auch wenn sie nur die Cloud betrifft.
+  Lokaler Manager und Cloud tragen immer dieselbe Versionsnummer. Ein Release kann deshalb für den
+  lokalen Manager ohne Änderung sein (so v0.27.0); das Update schadet dort nicht.
