@@ -1,6 +1,9 @@
 package main
 
-import "path/filepath"
+import (
+	"context"
+	"path/filepath"
+)
 
 // Der lokale Manager hat einen Bereich: das ganze Netz. In die Cloud umgezogene Geräte
 // verwaltet die Cloud, sie gehören nicht in die Routine.
@@ -19,3 +22,6 @@ func (p *Poller) areaDevices(rebootArea) []Device {
 	}
 	return out
 }
+
+// rebootHygiene: Aufräumen vor dem geplanten Lauf – nur in der Cloud (Bewohner).
+func (p *Poller) rebootHygiene(context.Context, rebootArea, string) string { return "" }

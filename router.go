@@ -68,6 +68,9 @@ type RouterNet struct {
 	First   string `json:"first,omitempty"`
 	Last    string `json:"last,omitempty"`
 	DNS     string `json:"dns,omitempty"` // leer = Router
+	// Auto: vom Manager angelegt (z. B. „Bewohner“), nicht gespeichert und vom Admin
+	// nicht änderbar – kommt bei jedem Lesen aus routerAuto dazu.
+	Auto string `json:"auto,omitempty"`
 }
 
 type RouterCfg struct {
@@ -98,7 +101,19 @@ func (p *Poller) Router(key string) RouterCfg {
 	if !ok || len(c.Nets) == 0 {
 		c.Nets = []RouterNet{{Address: "192.168.88.1/24", VLAN: 1}}
 	}
+	c.Nets = append(manualNets(c.Nets), p.routerAuto(key)...)
 	return c
+}
+
+// manualNets: die Netze ohne die automatisch angelegten.
+func manualNets(nets []RouterNet) []RouterNet {
+	out := make([]RouterNet, 0, len(nets))
+	for _, n := range nets {
+		if n.Auto == "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // IsRouter: Ist das Gerät in seinem Bereich als Router gewählt?
@@ -117,9 +132,16 @@ func (p *Poller) SaveRouter(key string, c RouterCfg) (RouterCfg, error) {
 		_, has := p.vault.Get(routerSecretKey(key, x.Name))
 		x.SecretSet = has || x.Secret != ""
 	}
-	if err := validRouter(&c); err != nil {
+	// Automatische Netze bearbeitet nur der Manager: was der Admin mitschickt, fällt weg,
+	// geprüft wird zusammen mit dem aktuellen Stand (Überschneidungen, doppelte VLANs).
+	c.Nets = manualNets(c.Nets)
+	auto := p.routerAuto(key)
+	full := c
+	full.Nets = append(append([]RouterNet{}, c.Nets...), auto...)
+	if err := validRouter(&full); err != nil {
 		return c, err
 	}
+	c.Ports, c.Nets = full.Ports, full.Nets[:len(c.Nets)]
 	m := p.routerAll()
 	old := m[key]
 	c.Pending = old.Pending || routerHash(old, nil) != routerHash(c, nil)

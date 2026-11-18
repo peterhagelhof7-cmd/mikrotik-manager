@@ -48,7 +48,11 @@ func siteVLANs(c RouterCfg) []SiteVLAN {
 	for _, n := range c.Nets {
 		if n.VLAN > 1 && !seen[n.VLAN] {
 			seen[n.VLAN] = true
-			out = append(out, SiteVLAN{n.VLAN, fmt.Sprintf("VLAN %d (%s)", n.VLAN, n.Address)})
+			l := fmt.Sprintf("VLAN %d (%s)", n.VLAN, n.Address)
+			if n.Auto != "" {
+				l = fmt.Sprintf("VLAN %d (%s, %s, automatisch)", n.VLAN, n.Auto, n.Address)
+			}
+			out = append(out, SiteVLAN{n.VLAN, l})
 		}
 	}
 	for _, v := range routerVLANs(c) {

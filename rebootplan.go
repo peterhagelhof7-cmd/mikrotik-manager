@@ -413,7 +413,12 @@ func (p *Poller) RunRebootPlan(a rebootArea, reason string) error {
 	}
 	go func() {
 		defer p.reboots.end(a)
+		// vor dem Neustart: Aufräumen (Cloud: Bewohner-Hygiene), danach läuft der Neustart ohnehin
+		pre := p.rebootHygiene(p.ctx, a, reason)
 		p.runRebootPlan(p.ctx, a, c.Devices)
+		if pre != "" {
+			p.updateRebootPlan(a, func(s *RebootPlan) { s.LastNote = strings.TrimSpace(pre + " " + s.LastNote) })
+		}
 	}()
 	return nil
 }
