@@ -74,11 +74,15 @@ type RouterNet struct {
 }
 
 type RouterCfg struct {
-	Device  string       `json:"device"`
-	Ports   []RouterPort `json:"ports"`
-	Nets    []RouterNet  `json:"nets"`
-	Updated time.Time    `json:"updated,omitempty"`
-	Pending bool         `json:"pending,omitempty"` // gespeichert, aber noch nicht auf dem Gerät
+	Device string       `json:"device"`
+	Ports  []RouterPort `json:"ports"`
+	Nets   []RouterNet  `json:"nets"`
+	// AutoVLANs: VLAN-Bereiche, die der Manager getaggt an die Bridge legt (z. B. Bewohner im
+	// Einzel-VLAN, "2000-3999"; die Schnittstellen dazu legt ein eigener Abgleich an). Wie
+	// automatische Netze: nicht gespeichert, nicht änderbar, kommt bei jedem Lesen dazu.
+	AutoVLANs []string  `json:"autoVlans,omitempty"`
+	Updated   time.Time `json:"updated,omitempty"`
+	Pending   bool      `json:"pending,omitempty"` // gespeichert, aber noch nicht auf dem Gerät
 }
 
 var routerMu sync.Mutex
@@ -102,6 +106,7 @@ func (p *Poller) Router(key string) RouterCfg {
 		c.Nets = []RouterNet{{Address: "192.168.88.1/24", VLAN: 1}}
 	}
 	c.Nets = append(manualNets(c.Nets), p.routerAuto(key)...)
+	c.AutoVLANs = p.routerAutoVLANs(key)
 	return c
 }
 
@@ -138,9 +143,11 @@ func (p *Poller) SaveRouter(key string, c RouterCfg) (RouterCfg, error) {
 	auto := p.routerAuto(key)
 	full := c
 	full.Nets = append(append([]RouterNet{}, c.Nets...), auto...)
+	full.AutoVLANs = p.routerAutoVLANs(key)
 	if err := validRouter(&full); err != nil {
 		return c, err
 	}
+	c.AutoVLANs = nil
 	c.Ports, c.Nets = full.Ports, full.Nets[:len(c.Nets)]
 	m := p.routerAll()
 	old := m[key]
@@ -343,7 +350,43 @@ func validRouter(c *RouterCfg) error {
 			return fmt.Errorf("VLAN %d liegt am WAN (%s) und darf nicht an %s benutzt werden", v, o, p)
 		}
 	}
+	for _, r := range c.AutoVLANs {
+		lo, hi, ok := vlanRange(r)
+		if !ok {
+			return fmt.Errorf("VLAN-Bereich %q ungültig", r)
+		}
+		in := func(v int) bool { return v >= lo && v <= hi }
+		for _, n := range c.Nets {
+			if n.VLAN > 1 && in(n.VLAN) {
+				return fmt.Errorf("Netzwerk %s: VLAN %d liegt im VLAN-Bereich %s der Bewohner (Einzel-VLAN)", n.Address, n.VLAN, r)
+			}
+		}
+		for v, o := range wanV {
+			if in(v) {
+				return fmt.Errorf("VLAN %d am WAN (%s) liegt im VLAN-Bereich %s der Bewohner (Einzel-VLAN)", v, o, r)
+			}
+		}
+		for v, o := range used {
+			if in(v) {
+				return fmt.Errorf("VLAN %d an %s liegt im VLAN-Bereich %s der Bewohner (Einzel-VLAN)", v, o, r)
+			}
+		}
+	}
 	return nil
+}
+
+// vlanRange: "2000-3999" → 2000, 3999.
+func vlanRange(r string) (lo, hi int, ok bool) {
+	a, b, found := strings.Cut(r, "-")
+	if !found {
+		return 0, 0, false
+	}
+	lo, e1 := strconv.Atoi(a)
+	hi, e2 := strconv.Atoi(b)
+	if e1 != nil || e2 != nil || lo < 2 || hi > 4094 || lo > hi {
+		return 0, 0, false
+	}
+	return lo, hi, true
 }
 
 // --- Plan ---
@@ -351,6 +394,7 @@ func validRouter(c *RouterCfg) error {
 // routerVLAN ist eine Zeile der Bridge-VLAN-Tabelle.
 type routerVLAN struct {
 	ID       int
+	Range    string // statt ID: Bereich "2000-3999" (AutoVLANs)
 	Tagged   []string
 	Untagged []string
 }
@@ -405,6 +449,15 @@ func routerVLANs(c RouterCfg) []routerVLAN {
 			}
 		}
 		out = append(out, r)
+	}
+	// Bereiche des Managers (Bewohner im Einzel-VLAN): wie geroutete VLANs an der Bridge und
+	// an allen Access-Ports ohne VLAN-Liste getaggt
+	for _, rg := range c.AutoVLANs {
+		lo, _, ok := vlanRange(rg)
+		if !ok {
+			continue
+		}
+		out = append(out, routerVLAN{ID: lo, Range: rg, Tagged: append([]string{"BRIDGE"}, open...)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
@@ -560,6 +613,9 @@ func routerScript(c RouterCfg, secrets map[string]string, bridge string) string 
 		"/ip dhcp-client remove [find]",
 		"/interface pppoe-client remove [find]",
 		"/ip address remove [find where dynamic=no and interface!=" + tun + "]",
+		// Einträge des Bewohner-Abgleichs (Cloud, Einzel-VLAN) hängen an mm-net – sonst lässt
+		// sich die Liste nicht neu anlegen; der Abgleich legt sie nach dem Ausrollen wieder an.
+		"/interface list member remove [find where comment~" + q("^mm-bewohner:") + "]",
 		"/interface list member remove [find comment=" + cm + "]",
 		"/interface list remove [find comment=" + cm + "]",
 		"/interface bridge vlan remove [find where bridge=" + br + " and dynamic=no]",
@@ -666,7 +722,11 @@ func routerScript(c RouterCfg, secrets map[string]string, bridge string) string 
 			}
 			tagged = append(tagged, t)
 		}
-		fmt.Fprintf(&b, "/interface bridge vlan add bridge=%s vlan-ids=%d", br, v.ID)
+		ids := strconv.Itoa(v.ID)
+		if v.Range != "" {
+			ids = v.Range
+		}
+		fmt.Fprintf(&b, "/interface bridge vlan add bridge=%s vlan-ids=%s", br, ids)
 		if len(tagged) > 0 {
 			b.WriteString(" tagged=" + q(strings.Join(tagged, ",")))
 		}
@@ -755,6 +815,9 @@ func routerSteps(c RouterCfg) []string {
 			s += ", DHCP " + n.First + " bis " + n.Last
 		}
 		out = append(out, s)
+	}
+	for _, r := range c.AutoVLANs {
+		out = append(out, "Bewohner im Einzel-VLAN: VLAN "+r+" getaggt an der Bridge und den Access-Ports ohne VLAN-Liste (VLAN, Netz, DHCP und Bandbreite je Bewohner legt danach der Bewohner-Abgleich an)")
 	}
 	out = append(out, "NAT ins Internet, von außen alles gesperrt, Netzwerke untereinander gesperrt (Standard-LAN darf in die anderen)")
 	for _, x := range c.Ports {
