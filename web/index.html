@@ -680,7 +680,7 @@ const CAUTH = ['wpa2-psk,wpa3-psk', 'wpa3-psk', 'wpa2-psk'];
 const CH2 = [2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, 2467, 2472];
 const CH5 = [5180, 5200, 5220, 5240, 5260, 5280, 5300, 5320, 5500, 5520, 5540, 5560, 5580, 5600, 5620, 5640, 5660, 5680, 5700];
 const opt = (v, cur, label) => `<option value="${esc(v)}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(label)}</option>`;
-const wlanDevs = () => (data.devices || []).filter(d => d.wirelessPkg).sort((a, b) => (a.identity || '').localeCompare(b.identity || ''));
+const wlanDevs = () => (data.devices || []).filter(d => d.wirelessPkg && (!d.noRadio || ((central && central.devices) || []).includes(d.id))).sort((a, b) => (a.identity || '').localeCompare(b.identity || ''));
 
 async function wlanInfo(tr, url, nets, msg) {
   const ssid = tr.querySelector('[data-c=ssid]').value.trim(), saved = (nets || []).find(n => n.ssid === ssid);

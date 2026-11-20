@@ -122,6 +122,9 @@ func (p *Poller) pollOne(ctx context.Context, id string) {
 		return
 	}
 	info.IP = d.IP
+	if !info.radioRead {
+		info.NoRadio = d.NoRadio // nicht lesbar: letzten Stand behalten
+	}
 	newID, _ := p.st.Observe(Device{SoftwareID: info.SoftwareID, IP: d.IP, Identity: info.Identity, Version: info.Version, Board: info.Board, Uptime: info.Uptime}, "api")
 	if newID != id {
 		// Zugangsdaten wandern mit, falls das Gerät gerade umgeschlüsselt wurde.
@@ -135,7 +138,7 @@ func (p *Poller) pollOne(ctx context.Context, id string) {
 		x.CurrentFW, x.UpgradeFW = info.CurrentFW, info.UpgradeFW
 		x.CPULoad, x.FreeMem, x.TotalMem, x.FreeHDD, x.TotalHDD = info.CPULoad, info.FreeMem, info.TotalMem, info.FreeHDD, info.TotalHDD
 		x.Packages, x.WirelessPkg, x.Channel, x.Latest = info.Packages, info.WirelessPkg, info.Channel, info.Latest
-		x.LTE, x.PoE = info.LTE, info.PoE
+		x.LTE, x.PoE, x.NoRadio = info.LTE, info.PoE, info.NoRadio
 		x.APIStatus, x.APIError, x.CredSource, x.LastPoll = "ok", "", src, time.Now()
 	})
 	if len(info.LTE) > 0 {
@@ -223,6 +226,11 @@ func (p *Poller) readDevice(ctx context.Context, ip string, c Cred) (Device, err
 			d.Packages = append(d.Packages, name+" "+s.Map["version"])
 		}
 	}
+	// WLAN-Schnittstellen: RouterOS 7 bringt das wireless-Paket auch auf Switches und
+	// Routern ohne Funk mit – ohne Schnittstelle ist das Gerät kein WLAN-Gerät.
+	if r, err := printAll(rctx, cl, "/interface/print", "=.proplist=type"); err == nil {
+		d.NoRadio, d.radioRead = !hasRadioIf(r), true
+	}
 	if r, err := printAll(rctx, cl, "/interface/ethernet/poe/print", "=.proplist=name"); err == nil {
 		d.PoE = len(r) > 0
 	}
@@ -241,6 +249,17 @@ func (p *Poller) readDevice(ctx context.Context, ip string, c Cred) (Device, err
 		d.Latest = m["latest-version"]
 	}
 	return d, nil
+}
+
+// hasRadioIf: Gibt es eine WLAN-Schnittstelle (wireless: wlan, wifi/wifiwave2: wifi bzw. wifiwave2)?
+func hasRadioIf(l []map[string]string) bool {
+	for _, x := range l {
+		switch x["type"] {
+		case "wlan", "wifi", "wifiwave2":
+			return true
+		}
+	}
+	return false
 }
 
 func classifyErr(err error, port int) (status, msg string) {
