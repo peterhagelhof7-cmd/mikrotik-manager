@@ -168,3 +168,20 @@ func TestMeshlinkFillAndScript(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Alle WLANs entfernt, Meshlink an: Knoten nur über Meshlink angebunden → gesperrt (sonst vom
+// Netz getrennt); mit Kabel → Funkteile aus, nur Hinweis.
+func TestMeshlinkNoNetworks(t *testing.T) {
+	c := meshCentral()
+	c.Networks = nil
+	if p, _ := planCentralState(meshState5180(true, true), testBridge(), c, "2437"); !strings.Contains(p.Blocked, "nur über Meshlink angebunden") {
+		t.Fatalf("nur Meshlink: %+v", p)
+	}
+	p, err := planCentralState(meshState5180(true, false), testBridge(), c, "2437")
+	if err != nil || p.Blocked != "" || p.Noop {
+		t.Fatalf("mit Kabel: %v %+v", err, p)
+	}
+	if !strings.Contains(p.Apply, `/interface wifi set [find name="wifi2"] disabled=yes`) {
+		t.Errorf("5 GHz nicht aus:\n%s", p.Apply)
+	}
+}

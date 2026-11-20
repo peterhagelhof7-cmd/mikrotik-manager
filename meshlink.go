@@ -173,6 +173,10 @@ func planMeshlink(s *wlanState, bi bridgeInfo, c CentralWLAN, radios []*centralR
 	}
 	cr := meshRadio(radios)
 	if cr == nil || cr.off {
+		if onMesh && !ms.uplinkLink {
+			blocked = "Das Gerät ist gerade nur über Meshlink angebunden (kein Etherlink) – das 5-GHz-Funkteil auszuschalten würde es vom Netz trennen. Erst ein Kabel anschließen."
+			return
+		}
 		warn = append(warn, "Kein 5-GHz-Funkteil in Betrieb – Meshlink wird auf diesem Gerät nicht eingerichtet.")
 		return
 	}
