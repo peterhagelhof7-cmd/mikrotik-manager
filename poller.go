@@ -84,12 +84,33 @@ func (p *Poller) run(ctx context.Context) {
 	p.TriggerAll()
 	t := time.NewTicker(p.cfg.PollInterval)
 	defer t.Stop()
+	r := time.NewTicker(retryTick)
+	defer r.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 			p.TriggerAll()
+		case <-r.C:
+			p.retryUnreachable(time.Now())
+		}
+	}
+}
+
+const (
+	retryTick  = 10 * time.Second
+	retryAfter = time.Minute // frühestens so lange nach dem letzten Fehlversuch erneut
+)
+
+// retryUnreachable versucht nicht erreichbare Geräte vor dem nächsten regulären
+// Durchlauf erneut (höchstens einmal je retryAfter). Anlass: Nach einem Neustart
+// startet der Manager oft, bevor das Netz zu den Geräten steht – ohne Wiederholung
+// blieben sie bis zum nächsten Intervall (5 min) „nicht erreichbar“.
+func (p *Poller) retryUnreachable(now time.Time) {
+	for _, d := range p.st.List() {
+		if d.APIStatus == "unreachable" && d.IP != "" && now.Sub(d.LastPoll) >= retryAfter {
+			p.Trigger(d.ID)
 		}
 	}
 }
