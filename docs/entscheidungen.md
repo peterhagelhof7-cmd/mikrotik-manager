@@ -647,3 +647,16 @@ ein hAP (RB951Ui-2nD) nahm `country=germany` nicht an, der Grund war nicht zu se
 in die globale Variable `mmApplied` und zeigt sie im Protokoll und in der Fehlermeldung
 („Gerät meldet: …“). Ältere Versionen kennen `:onerror` nicht und behalten das bisherige Skript.
 Maßgeblich ist die Version aus dem letzten Abruf.
+
+### 2026-11-20 – Land setzen: Frequenzmodus regulatory-domain (Paket wireless)
+
+Ein hAP (RB951Ui-2nD) lehnte `country=germany` ab: „only regulatory-domain mode allowed for
+this country“. Am Gerät stand `frequency-mode=manual-txpower` (von Hand, geht nur ohne Land).
+Setzt die WLAN-Verwaltung bei einem Gerät mit dem Paket „wireless“ ein Land, stellt sie im selben
+Befehl `frequency-mode=regulatory-domain` ein, wenn ein anderer Modus eingestellt ist. Das gilt für
+die Einzeländerung (eigener Hinweis im Plan, Rückweg setzt den alten Modus) und das zentrale WLAN
+bzw. die Kunden-Vorlage. Folge: Sendeleistung nach Landesvorgabe, ggf. etwas weniger Reichweite.
+`antenna-gain` bleibt unberührt.
+
+Außerdem: Zentrales WLAN ohne angehakte Geräte speichern ergab im Browser „Cannot read properties
+of null (reading 'length')“ – der Server liefert dann `devices: null`; die Seite rechnet jetzt damit.

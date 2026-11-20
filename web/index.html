@@ -804,7 +804,7 @@ $('#cSave').onclick = async () => {
     central = await api('POST', '/api/central', collectCentral());
     renderCentral(central);
     $('#cMsg').textContent = 'gespeichert – prüfe Geräte …';
-    const rows = central.devices.length ? await api('POST', '/api/central/preview', {}) : [];
+    const rows = (central.devices || []).length ? await api('POST', '/api/central/preview', {}) : [];
     renderCentralResult(rows);
     $('#cMsg').textContent = 'gespeichert und geprüft';
   } catch (e) { $('#cMsg').textContent = '❌ ' + e.message; }

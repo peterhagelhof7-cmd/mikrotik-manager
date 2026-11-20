@@ -718,6 +718,9 @@ func centralScriptLegacy(s *wlanState, radios []*centralRadio, c CentralWLAN, br
 		line := "/interface wireless set [find name=" + name + "] mode=ap-bridge ssid=" + q(n.SSID) +
 			" security-profile=" + profile(n, cr.auth[0]) + " hide-ssid=" + yesNo(n.Hidden) +
 			" channel-width=" + q(legacyWidths[cr.r.Width]) + " frequency=" + cr.freq + " country=" + q(c.Country)
+		if needRegDomain(c.Country, cr.x.freqMode) {
+			line += " frequency-mode=regulatory-domain" // mit Land nur dieser Modus erlaubt
+		}
 		if cr.is5 {
 			line += " skip-dfs-channels=" + cr.r.SkipDFS
 		}

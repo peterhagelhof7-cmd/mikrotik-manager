@@ -142,6 +142,7 @@ type wlanIfc struct {
 	rawWidth string            // Breite, wie RouterOS sie speichert
 	raw      map[string]string // alle Werte der Schnittstelle (zum Zurücksetzen)
 	country  string            // wirksames Land, klein geschrieben
+	freqMode string            // wireless: frequency-mode (manual-txpower, regulatory-domain, superchannel)
 	mld      string            // ausgeschalteter Multi-Link-Verbund, der das Funkteil blockiert
 }
 
@@ -325,7 +326,7 @@ func readWLAN(ctx context.Context, cl *routeros.Client) (*wlanState, error) {
 				b = band[x.Master]
 			} else {
 				bands, widths, chans := legacyBands(b, x.Chip)
-				x.rawWidth, x.country = m["channel-width"], m["country"]
+				x.rawWidth, x.country, x.freqMode = m["channel-width"], m["country"], m["frequency-mode"]
 				x.Radio = &RadioCfg{Band: b, Bands: bands, Width: widthUI(x.rawWidth), Widths: widths,
 					Freq: m["frequency"], Channels: chans, SkipDFS: m["skip-dfs-channels"]}
 				if !x.Disabled {
@@ -672,16 +673,30 @@ func planRadio(s *wlanState, x *wlanIfc, r *RadioEdit) (*wlanChange, []string, e
 	return &wlanChange{step: x.Name + ": " + strings.Join(labels, ", "), apply: apply.String(), undo: undo.String()}, warn, nil
 }
 
+// needRegDomain: Mit gesetztem Land erlaubt RouterOS (Paket wireless) nur frequency-mode=
+// regulatory-domain; manual-txpower und superchannel gehen nur ohne Land (no_country_set).
+func needRegDomain(country, freqMode string) bool {
+	return country != "" && country != "no_country_set" && freqMode != "" && freqMode != "regulatory-domain"
+}
+
 // planCountry setzt das Land (bestimmt erlaubte Kanäle und Sendeleistung) für alle Funkteile.
 func planCountry(s *wlanState, country string) []wlanChange {
 	var out []wlanChange
 	if s.pkg == "wireless" {
 		for _, x := range s.ifs {
 			if x.Master == "" && x.country != country {
+				step := fmt.Sprintf("%s: Land %s → %s", x.Name, orStd(x.country), country)
+				set, back := " country="+q(country), " country="+q(x.country)
+				if needRegDomain(country, x.freqMode) {
+					// sonst „only regulatory-domain mode allowed for this country“ (hAP, 20.11.2026)
+					step += fmt.Sprintf(", Frequenzmodus %s → regulatory-domain (für das Land nötig, Sendeleistung nach Landesvorgabe)", x.freqMode)
+					set += " frequency-mode=regulatory-domain"
+					back += " frequency-mode=" + q(x.freqMode)
+				}
 				out = append(out, wlanChange{
-					step:  fmt.Sprintf("%s: Land %s → %s", x.Name, orStd(x.country), country),
-					apply: "/interface wireless set [find name=" + q(x.Name) + "] country=" + q(country) + "\n",
-					undo:  try("/interface wireless set [find name=" + q(x.Name) + "] country=" + q(x.country)),
+					step:  step,
+					apply: "/interface wireless set [find name=" + q(x.Name) + "]" + set + "\n",
+					undo:  try("/interface wireless set [find name=" + q(x.Name) + "]" + back),
 				})
 			}
 		}
