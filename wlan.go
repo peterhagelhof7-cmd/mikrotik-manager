@@ -143,15 +143,17 @@ type wlanIfc struct {
 	raw      map[string]string // alle Werte der Schnittstelle (zum Zurücksetzen)
 	country  string            // wirksames Land, klein geschrieben
 	freqMode string            // wireless: frequency-mode (manual-txpower, regulatory-domain, superchannel)
+	antGain  string            // wireless: antenna-gain in dBi
 	mld      string            // ausgeschalteter Multi-Link-Verbund, der das Funkteil blockiert
 }
 
 type wlanState struct {
-	pkg  string
-	ifs  []*wlanIfc
-	secs map[string]map[string]string // Sicherheitsprofile nach Name
-	cfgs map[string]map[string]string // wifi: Konfigurationsprofile nach Name
-	mesh meshState                    // Meshlink: Skript, Zeitplan, ether1 (meshlink.go)
+	pkg   string
+	ifs   []*wlanIfc
+	secs  map[string]map[string]string // Sicherheitsprofile nach Name
+	cfgs  map[string]map[string]string // wifi: Konfigurationsprofile nach Name
+	mesh  meshState                    // Meshlink: Skript, Zeitplan, ether1 (meshlink.go)
+	onErr bool                         // RouterOS kennt :onerror (ab 7.13)
 }
 
 // --- Funkwerte ---
@@ -300,6 +302,10 @@ func readWLAN(ctx context.Context, cl *routeros.Client) (*wlanState, error) {
 		}
 	}
 
+	if l, err := printAll(ctx, cl, "/system/resource/print", "=.proplist=version"); err == nil && len(l) > 0 {
+		s.onErr = rosOnError(l[0]["version"])
+	}
+
 	if l, err := printAll(ctx, cl, "/interface/wireless/print"); err == nil && len(l) > 0 {
 		s.pkg = "wireless"
 		profs, err := printAll(ctx, cl, "/interface/wireless/security-profiles/print")
@@ -326,7 +332,7 @@ func readWLAN(ctx context.Context, cl *routeros.Client) (*wlanState, error) {
 				b = band[x.Master]
 			} else {
 				bands, widths, chans := legacyBands(b, x.Chip)
-				x.rawWidth, x.country, x.freqMode = m["channel-width"], m["country"], m["frequency-mode"]
+				x.rawWidth, x.country, x.freqMode, x.antGain = m["channel-width"], m["country"], m["frequency-mode"], m["antenna-gain"]
 				x.Radio = &RadioCfg{Band: b, Bands: bands, Width: widthUI(x.rawWidth), Widths: widths,
 					Freq: m["frequency"], Channels: chans, SkipDFS: m["skip-dfs-channels"]}
 				if !x.Disabled {
@@ -679,6 +685,26 @@ func needRegDomain(country, freqMode string) bool {
 	return country != "" && country != "no_country_set" && freqMode != "" && freqMode != "regulatory-domain"
 }
 
+// antGainRetry: Mit gesetztem Land verlangt RouterOS eine Mindest-Antennenverstärkung (eingebaute
+// Antenne, aufgerundet) und lehnt kleinere Werte ab: „minimal antenna-gain for this country is 2“
+// (hAP mit antenna-gain=0, 20.11.2026). Ab 7.13 liest das Skript den Wert aus der Meldung und
+// wiederholt den Befehl mit antenna-gain=<Mindestwert>; andere Fehler gehen unverändert weiter.
+// Ohne :onerror bleibt es beim einfachen Befehl.
+const antGainMsg = "minimal antenna-gain for this country is "
+
+func antGainRetry(cmd string, onErr bool) string {
+	if !onErr {
+		return cmd + "\n"
+	}
+	return ":onerror mmCe in={\n" + cmd + "\n} do={\n" +
+		":local i [:find $mmCe \"" + antGainMsg + "\"]\n" +
+		":if ([:typeof $i] = \"nil\") do={ :error $mmCe }\n" +
+		fmt.Sprintf(":local r [:pick $mmCe ($i + %d) [:len $mmCe]]\n", len(antGainMsg)) +
+		":local g [:tonum [:pick $r 0 [:find $r \" \"]]]\n" +
+		":log warning (\"mm: antenna-gain \" . $g . \" (Mindestwert fuer das Land)\")\n" +
+		cmd + " antenna-gain=$g\n}\n"
+}
+
 // planCountry setzt das Land (bestimmt erlaubte Kanäle und Sendeleistung) für alle Funkteile.
 func planCountry(s *wlanState, country string) []wlanChange {
 	var out []wlanChange
@@ -693,9 +719,13 @@ func planCountry(s *wlanState, country string) []wlanChange {
 					set += " frequency-mode=regulatory-domain"
 					back += " frequency-mode=" + q(x.freqMode)
 				}
+				if s.onErr && x.antGain != "" {
+					step += fmt.Sprintf(", Antennenverstärkung (bisher %s dBi) bei Bedarf auf den Mindestwert des Landes", x.antGain)
+					back += " antenna-gain=" + q(x.antGain)
+				}
 				out = append(out, wlanChange{
 					step:  step,
-					apply: "/interface wireless set [find name=" + q(x.Name) + "]" + set + "\n",
+					apply: antGainRetry("/interface wireless set [find name="+q(x.Name)+"]"+set, s.onErr),
 					undo:  try("/interface wireless set [find name=" + q(x.Name) + "]" + back),
 				})
 			}

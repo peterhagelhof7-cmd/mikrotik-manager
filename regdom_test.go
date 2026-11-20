@@ -38,3 +38,31 @@ func TestPlanCountryRegDomain(t *testing.T) {
 		}
 	}
 }
+
+// Echttest 20.11.2026 (hAP, antenna-gain=0): „minimal antenna-gain for this country is 2“.
+func TestAntGainRetry(t *testing.T) {
+	cmd := `/interface wireless set [find name="wlan1"] country="germany"`
+	if got := antGainRetry(cmd, false); got != cmd+"\n" {
+		t.Errorf("ohne onerror: %q", got)
+	}
+	got := antGainRetry(cmd, true)
+	for _, want := range []string{
+		":onerror mmCe in={\n" + cmd + "\n} do={\n",
+		`[:find $mmCe "minimal antenna-gain for this country is "]`,
+		`do={ :error $mmCe }`,
+		`[:pick $mmCe ($i + 41) [:len $mmCe]]`,
+		cmd + " antenna-gain=$g\n}\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("fehlt %q in\n%s", want, got)
+		}
+	}
+	s := &wlanState{pkg: "wireless", onErr: true, ifs: []*wlanIfc{
+		{WlanIf: WlanIf{Name: "wlan1"}, country: "no_country_set", freqMode: "manual-txpower", antGain: "0"},
+	}}
+	cc := planCountry(s, "germany")
+	if len(cc) != 1 || !strings.Contains(cc[0].apply, ":onerror mmCe") || !strings.Contains(cc[0].undo, `antenna-gain="0"`) ||
+		!strings.Contains(cc[0].step, "Antennenverstärkung (bisher 0 dBi)") {
+		t.Fatalf("%+v", cc)
+	}
+}

@@ -660,3 +660,14 @@ bzw. die Kunden-Vorlage. Folge: Sendeleistung nach Landesvorgabe, ggf. etwas wen
 
 Außerdem: Zentrales WLAN ohne angehakte Geräte speichern ergab im Browser „Cannot read properties
 of null (reading 'length')“ – der Server liefert dann `devices: null`; die Seite rechnet jetzt damit.
+
+### 2026-11-20 – Land setzen: Mindest-Antennenverstärkung aus der Gerätemeldung
+
+Nach dem Frequenzmodus lehnte derselbe hAP das Land erneut ab: „minimal antenna-gain for this
+country is 2“ (am Gerät `antenna-gain=0`, eingebaute Antenne laut Datenblatt 1,5 dBi). Die Doku
+nennt als Standard 0 – einen festen Wert, der für alle Geräte passt, gibt es nicht. Der Manager
+nimmt deshalb den Mindestwert aus der Meldung des Geräts: Ab RouterOS 7.13 umschließt er den
+Befehl, der das Land setzt (Einzeländerung und zentrales WLAN/Vorlage, Paket wireless), mit
+`:onerror`, liest bei dieser Meldung die Zahl aus und wiederholt den Befehl mit
+`antenna-gain=<Mindestwert>`. Andere Fehler gehen unverändert weiter. Eine höhere
+Antennenverstärkung senkt nur die Sendeleistung. Der Rückweg setzt den alten Wert.

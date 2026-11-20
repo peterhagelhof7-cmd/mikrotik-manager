@@ -724,7 +724,7 @@ func centralScriptLegacy(s *wlanState, radios []*centralRadio, c CentralWLAN, br
 		if cr.is5 {
 			line += " skip-dfs-channels=" + cr.r.SkipDFS
 		}
-		b.WriteString(line + " disabled=no\n")
+		b.WriteString(antGainRetry(line+" disabled=no", s.onErr))
 		if br != "" && cr.x.Bridge == "" {
 			b.WriteString(try("/interface bridge port add bridge=" + q(br) + " interface=" + name))
 		}
