@@ -27,9 +27,20 @@ type updDiag struct {
 	NTPStatus, NTPServers string
 	DNS                   string
 	Resolved, ResolveErr  string
-	FetchData, FetchErr   string
-	FetchStatus, FetchURL string
+	Fetch                 []updFetch // HTTPS und HTTP: ein Proxy/Web-Filter fängt oft nur HTTP ab
 }
+
+// updFetch: Probeabruf der Versionsdatei über eine URL.
+type updFetch struct {
+	URL, Data, Err, Status string
+}
+
+// first: erste Zeile der Antwort; ok: sieht wie eine RouterOS-Versionszeile aus.
+func (f updFetch) first() string {
+	s, _, _ := strings.Cut(strings.TrimSpace(f.Data), "\n")
+	return s
+}
+func (f updFetch) ok() bool { return f.Err == "" && rosVersionLine.MatchString(f.first()) }
 
 var rosVersionLine = regexp.MustCompile(`^\d+\.\d+(\.\d+)?(beta\d+|rc\d+)?\b`)
 
@@ -78,18 +89,21 @@ func readUpdDiag(ctx context.Context, cl *routeros.Client) updDiag {
 			g.ResolveErr = "keine Adresse"
 		}
 	}
-	g.FetchURL = "https://" + updHost + "/routeros/NEWESTa7." + g.Channel
-	if r, err := run(30*time.Second, "/tool/fetch", "=url="+g.FetchURL, "=output=user"); err != nil {
-		g.FetchErr = err.Error()
-	} else {
-		for _, re := range r.Re {
-			if s := re.Map["status"]; s != "" {
-				g.FetchStatus = s
-			}
-			if d := re.Map["data"]; d != "" {
-				g.FetchData = d
+	for _, scheme := range []string{"https", "http"} {
+		f := updFetch{URL: scheme + "://" + updHost + "/routeros/NEWESTa7." + g.Channel}
+		if r, err := run(30*time.Second, "/tool/fetch", "=url="+f.URL, "=output=user"); err != nil {
+			f.Err = err.Error()
+		} else {
+			for _, re := range r.Re {
+				if s := re.Map["status"]; s != "" {
+					f.Status = s
+				}
+				if d := re.Map["data"]; d != "" {
+					f.Data = d
+				}
 			}
 		}
+		g.Fetch = append(g.Fetch, f)
 	}
 	return g
 }
@@ -165,27 +179,38 @@ func (g updDiag) report(now time.Time) (lines []string, hint string) {
 		res = "nicht aufgelöst (" + g.ResolveErr + ")"
 	}
 	lines = append(lines, fmt.Sprintf("Diagnose DNS: %s – %s → %s", dns, updHost, res))
-	// Probeabruf
-	first, _, _ := strings.Cut(strings.TrimSpace(g.FetchData), "\n")
-	fetchOK := rosVersionLine.MatchString(first)
-	switch {
-	case g.FetchErr != "":
-		lines = append(lines, fmt.Sprintf("Diagnose Abruf %s: Fehler – %s", g.FetchURL, g.FetchErr))
-	case fetchOK:
-		lines = append(lines, fmt.Sprintf("Diagnose Abruf %s: ok – %s", g.FetchURL, first))
-	default:
-		lines = append(lines, fmt.Sprintf("Diagnose Abruf %s: keine Versionsdatei (%s) – %q", g.FetchURL, g.FetchStatus, clip(first, 80)))
+	// Probeabrufe (HTTPS, HTTP)
+	var httpsF, httpF updFetch
+	for _, f := range g.Fetch {
+		switch {
+		case f.Err != "":
+			lines = append(lines, fmt.Sprintf("Diagnose Abruf %s: Fehler – %s", f.URL, f.Err))
+		case f.ok():
+			lines = append(lines, fmt.Sprintf("Diagnose Abruf %s: ok – %s", f.URL, f.first()))
+		default:
+			lines = append(lines, fmt.Sprintf("Diagnose Abruf %s: keine Versionsdatei (%s) – %q", f.URL, f.Status, clip(f.first(), 80)))
+		}
+		if strings.HasPrefix(f.URL, "https:") {
+			httpsF = f
+		} else {
+			httpF = f
+		}
 	}
+	filter := " – Web-Filter, Proxy oder Firewall am Standort prüfen (" + updHost + " und download.mikrotik.com freigeben)"
 
 	switch {
 	case clockBad:
 		hint = "Uhrzeit des Geräts falsch – NTP-Client einschalten (Tab „Neustarts“: Haken „NTP an“ und Gerät in der Routine, oder am Gerät /system ntp client set enabled=yes), dann Update erneut starten"
 	case g.Resolved == "":
 		hint = "DNS am Gerät löst " + updHost + " nicht auf – DNS-Server am Gerät bzw. am Standort prüfen"
-	case !fetchOK:
-		hint = "Abruf der Versionsdatei von " + updHost + " scheitert oder liefert etwas anderes – Web-Filter, Proxy oder Firewall am Standort prüfen (" + updHost + " und download.mikrotik.com freigeben)"
+	case httpsF.ok() && !httpF.ok():
+		hint = "Abruf über HTTPS klappt, über HTTP (Port 80) nicht bzw. mit fremdem Inhalt – am Standort fängt ein Proxy oder Web-Filter HTTP ab" + filter
+	case !httpsF.ok() && !httpF.ok():
+		hint = "Abruf der Versionsdatei scheitert über HTTPS und HTTP" + filter
+	case !httpsF.ok():
+		hint = "Abruf über HTTP klappt, über HTTPS nicht" + filter
 	default:
-		hint = "Abruf vom Gerät klappt (" + first + ") – vermutlich nur vorübergehend, Update erneut starten"
+		hint = "Das Gerät bekommt die Versionsdatei über HTTPS und HTTP (" + httpsF.first() + ") – am Netz liegt es nicht; die Update-Suche von RouterOS selbst scheitert (Gerät neu starten, sonst RouterOS von Hand aktualisieren)"
 	}
 	return lines, hint
 }
