@@ -549,11 +549,39 @@ func TestCentral(t *testing.T) {
 	}
 }
 
+// Alle WLANs entfernt: Funkteile aus, virtuelle WLANs weg, Hinweis in der Vorschau.
+func TestCentralNoNetworks(t *testing.T) {
+	c := defaultCentral()
+	c.Networks = nil
+	p, err := planCentralState(centralTestState("20", "2437"), testBridge(), c, "2437")
+	if err != nil || p.Noop || p.Blocked != "" {
+		t.Fatalf("%v %+v", err, p)
+	}
+	all := strings.Join(p.Steps, "\n")
+	for _, want := range []string{"sollte aus sein", `virtuelles WLAN wifi3 ("Heim-5") gehört nicht zur Konfiguration`} {
+		if !strings.Contains(all, want) {
+			t.Errorf("fehlt %q in\n%s", want, all)
+		}
+	}
+	for _, want := range []string{`/interface wifi set [find name="wifi1"] disabled=yes`, `/interface wifi set [find name="wifi2"] disabled=yes`} {
+		if !strings.Contains(p.Apply, want) {
+			t.Errorf("fehlt: %s\n--- Skript:\n%s", want, p.Apply)
+		}
+	}
+	if strings.Contains(p.Apply, "configuration add") {
+		t.Errorf("legt trotzdem ein WLAN an:\n%s", p.Apply)
+	}
+	if !strings.Contains(strings.Join(p.Warn, "\n"), "alle Funkteile werden ausgeschaltet") {
+		t.Errorf("Hinweis fehlt: %v", p.Warn)
+	}
+}
+
 func TestCentralValidate(t *testing.T) {
 	p := &Poller{cfg: Config{DataDir: t.TempDir()}, st: newStore(t.TempDir())}
 	c := defaultCentral()
-	if p.validCentral(&c) == nil {
-		t.Error("ohne WLAN zugelassen")
+	// ohne WLAN erlaubt: Ausrollen schaltet dann alle Funkteile aus
+	if err := p.validCentral(&c); err != nil {
+		t.Errorf("ohne WLAN abgelehnt: %v", err)
 	}
 	c.Networks = []CentralNet{{SSID: "A", Passphrase: "geheim123", Auth: "wpa3-psk,wpa2-psk", Bands: "both"}}
 	c.Devices = []string{"unbekannt"}

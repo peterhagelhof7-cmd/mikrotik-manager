@@ -609,3 +609,11 @@ Monats; nur erfassen, keine Schwelle; mm und Cloud; noch kein Testgerät.
 - **Jede ausgelieferte Änderung bekommt eine neue Version,** auch wenn sie nur die Cloud betrifft.
   Lokaler Manager und Cloud tragen immer dieselbe Versionsnummer. Ein Release kann deshalb für den
   lokalen Manager ohne Änderung sein (so v0.27.0); das Update schadet dort nicht.
+
+### 2026-11-20 – Zentrale WLAN-Verwaltung ohne WLAN
+
+Bisher verlangte die zentrale WLAN-Verwaltung 1 bis 8 WLANs. Wer alle WLANs entfernen wollte,
+konnte nicht speichern. Jetzt sind 0 bis 8 WLANs erlaubt. Ohne WLAN setzt das Ausrollen die
+WLAN-Konfiguration zurück und schaltet alle Funkteile der gewählten Geräte aus; Vorschau und
+Rückfrage beim Ausrollen weisen darauf hin. Wer die Geräte nur nicht mehr zentral verwalten will,
+nimmt stattdessen den Haken „aktiviert“ bzw. die Geräte heraus – dann bleibt deren WLAN, wie es ist.

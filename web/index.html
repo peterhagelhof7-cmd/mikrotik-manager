@@ -825,7 +825,7 @@ function renderCentralResult(rows) {
   $('#cResult').innerHTML = h; $('#cResult').hidden = false;
   const run = $('#cRun');
   if (run) run.onclick = async () => {
-    if (!confirm(`WLAN-Konfiguration auf ${todo.map(t => t.identity).join(', ')} zurücksetzen und neu ausrollen?\nVerbundene WLAN-Geräte werden kurz getrennt.`)) return;
+    if (!confirm(`WLAN-Konfiguration auf ${todo.map(t => t.identity).join(', ')} zurücksetzen und neu ausrollen?\nVerbundene WLAN-Geräte werden kurz getrennt.` + (((central || {}).networks || []).length ? '' : '\n\nKeine WLANs vorgegeben: auf diesen Geräten werden ALLE Funkteile ausgeschaltet.'))) return;
     run.disabled = true;
     try { const r = await api('POST', '/api/central/apply', {ids: todo.map(t => t.id)}); showResults('Zentrale WLAN-Konfiguration ausrollen', r.results); load(); $('#cMsg').textContent = 'Ausrollen gestartet – Status oben'; }
     catch (e) { $('#cMsg').textContent = '❌ ' + e.message; run.disabled = false; }

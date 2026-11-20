@@ -106,8 +106,9 @@ func (p *Poller) validCentral(c *CentralWLAN) error {
 	if !validCountry(c.Country) {
 		return fmt.Errorf("Land %q nicht in der Auswahlliste", c.Country)
 	}
-	if len(c.Networks) == 0 || len(c.Networks) > 8 {
-		return fmt.Errorf("1 bis 8 WLANs angeben")
+	// 0 WLANs ist erlaubt: Ausrollen schaltet dann alle Funkteile aus (WLAN entfernen).
+	if len(c.Networks) > 8 {
+		return fmt.Errorf("höchstens 8 WLANs angeben")
 	}
 	seen := map[string]bool{}
 	for i := range c.Networks {
@@ -283,6 +284,9 @@ func planCentralState(s *wlanState, bi bridgeInfo, c CentralWLAN, chan2 string) 
 	br := bi.name
 	if br == "" {
 		p.Warn = append(p.Warn, "Keine Bridge auf dem Gerät – virtuelle WLANs hängen dann an keiner Bridge.")
+	}
+	if len(c.Networks) == 0 {
+		p.Warn = append(p.Warn, "Keine WLANs vorgegeben: alle Funkteile werden ausgeschaltet und die WLAN-Profile entfernt.")
 	}
 
 	// Sollzustand je Funkteil
