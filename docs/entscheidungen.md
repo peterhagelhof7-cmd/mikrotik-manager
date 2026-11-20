@@ -617,3 +617,23 @@ konnte nicht speichern. Jetzt sind 0 bis 8 WLANs erlaubt. Ohne WLAN setzt das Au
 WLAN-Konfiguration zurück und schaltet alle Funkteile der gewählten Geräte aus; Vorschau und
 Rückfrage beim Ausrollen weisen darauf hin. Wer die Geräte nur nicht mehr zentral verwalten will,
 nimmt stattdessen den Haken „aktiviert“ bzw. die Geräte heraus – dann bleibt deren WLAN, wie es ist.
+
+### 2026-11-20 – Diagnose, wenn die Update-Suche keine Version findet
+
+Meldet das Gerät nach `check-for-updates` keine neueste Version (z. B. `ERROR: broken
+NEWESTa7.stable file`), liest der Update-Job nur lesend Uhrzeit, NTP-Client und DNS, löst
+upgrade.mikrotik.com auf (`/ping count=1`) und ruft die Versionsdatei vom Gerät aus ab
+(`/tool fetch output=user`, schreibt keine Datei). Die Ergebnisse stehen im Job-Protokoll, der
+wahrscheinlichste Grund in der Fehlermeldung: Uhr falsch → DNS → Abruf gesperrt (Web-Filter,
+Proxy) → sonst vorübergehend. Der Manager ändert dabei nichts am Gerät.
+
+### 2026-11-20 – Neustart-Routine: Haken „NTP an“
+
+Geräte ohne batteriegepufferte Uhr starten nach einem Neustart mit falscher Zeit; ohne NTP
+scheitern dann Update-Suche und Zertifikatsprüfung. User-Entscheidung: kein automatisches
+Einschalten beim Abfragen und nicht bei der Anmeldung, sondern ein Haken in der Neustart-Routine.
+Ist er gesetzt, schaltet der Manager vor jedem Neustart den NTP-Client ein, falls er aus ist
+(`de.pool.ntp.org` nur, wenn noch kein Server eingetragen ist; eingetragene Server bleiben), und
+wartet nach dem Neustart bis zu 2 Minuten auf „synchronized“. Das Ergebnis steht im Job-Protokoll,
+das Einschalten im Audit-Log. Bleibt die Zeit unsynchron, ist das nur ein Hinweis – die Routine
+läuft weiter.

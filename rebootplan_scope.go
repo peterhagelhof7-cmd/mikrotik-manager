@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"path/filepath"
 )
 
@@ -25,3 +26,8 @@ func (p *Poller) areaDevices(rebootArea) []Device {
 
 // rebootHygiene: Aufräumen vor dem geplanten Lauf – nur in der Cloud (Bewohner).
 func (p *Poller) rebootHygiene(context.Context, rebootArea, string) string { return "" }
+
+// noteNTP: Einschalten des NTP-Clients durch die Neustart-Routine (ohne Audit-Log: ins Log).
+func (p *Poller) noteNTP(id, name, done string) {
+	log.Printf("%s: %s (Neustart-Routine)", name, done)
+}

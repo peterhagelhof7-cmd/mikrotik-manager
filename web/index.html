@@ -215,6 +215,7 @@ pre.diff .add{color:#7fdca4}pre.diff .del{color:#f0a0a0}pre.diff .gap{color:var(
         <div><label for="rbTime">Uhrzeit</label><input type="time" id="rbTime" style="width:auto" title="Uhrzeit (Ortszeit des Managers), zu der die Routine startet. Empfohlen: nachts, nicht gleichzeitig mit Backups und Updates."></div>
         <div><label>Wochentage</label><div id="rbDays" style="display:flex;gap:10px;flex-wrap:wrap"></div></div>
       </div>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:10px;color:var(--fg)"><input type="checkbox" id="rbNtp" style="width:auto" title="Vor jedem Neustart schaltet der Manager den NTP-Client des Geräts ein, falls er aus ist (Zeitserver de.pool.ntp.org nur, wenn noch keiner eingetragen ist). Nach dem Neustart wartet er bis zu 2 Minuten, bis die Uhrzeit synchron ist, und schreibt das Ergebnis ins Protokoll. Geräte ohne Batterie-Uhr starten sonst mit falscher Zeit – dann scheitern Update-Suche und Zertifikate."><b>NTP an</b> <span class="hint">(vor dem Neustart NTP-Client einschalten, danach auf Zeit-Synchronisation warten)</span></label>
       <label style="margin-top:10px">Geräte <span class="hint">(keines gewählt = keine Neustarts)</span></label>
       <div id="rbDevices"></div>
       <div class="btns" style="justify-content:flex-start;align-items:center">
@@ -1019,7 +1020,7 @@ function renderReboot(r, keepForm) {
   $('#rbBadge').innerHTML = r.running ? '<span class="badge b-warn">läuft</span>' : r.enabled ? '<span class="badge b-ok">aktiv</span>' : '';
   if (typeof scopeLabel === 'function') $('#rbWhere').textContent = [scopeLabel(), siteLabel()].filter(Boolean).map(x => '· ' + x).join(' ');
   if (!keepForm) {
-    $('#rbEnabled').checked = r.enabled; $('#rbTime').value = r.time;
+    $('#rbEnabled').checked = r.enabled; $('#rbTime').value = r.time; $('#rbNtp').checked = !!r.ntp;
     $('#rbDays').innerHTML = DAYS.map(([d, l]) => `<label style="display:flex;gap:4px;align-items:center;margin:0;color:var(--fg)"><input type="checkbox" data-rday="${d}" ${(r.days || []).includes(d) ? 'checked' : ''} style="width:auto" title="Routine am ${l} ausführen.">${l}</label>`).join('');
     $('#rbDevices').innerHTML = rbDevs().map(d => `<label style="display:flex;gap:8px;align-items:center;color:var(--fg);margin:4px 0"><input type="checkbox" data-rdev="${esc(d.id)}" ${(r.devices || []).includes(d.id) ? 'checked' : ''} style="width:auto" title="Haken = dieses Gerät startet in der Routine neu.">${esc(d.identity)}</label>`).join('') || '<div class="hint">keine Geräte</div>';
   }
@@ -1045,7 +1046,7 @@ async function loadReboot(keepForm, live) {
   } catch (e) { $('#rbMsg').textContent = 'Laden fehlgeschlagen: ' + e.message; }
 }
 $('#rbSave').onclick = async () => {
-  const body = {enabled: $('#rbEnabled').checked, time: $('#rbTime').value,
+  const body = {enabled: $('#rbEnabled').checked, time: $('#rbTime').value, ntp: $('#rbNtp').checked,
     days: [...document.querySelectorAll('#rbDays [data-rday]')].filter(i => i.checked).map(i => +i.dataset.rday),
     devices: [...document.querySelectorAll('#rbDevices [data-rdev]')].filter(i => i.checked).map(i => i.dataset.rdev)};
   try { renderReboot(await api('POST', '/api/reboot-plan' + rbQ(), body)); flash('gespeichert'); } catch (e) { $('#rbMsg').textContent = '❌ ' + e.message; }

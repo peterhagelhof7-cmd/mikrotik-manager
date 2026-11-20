@@ -44,6 +44,7 @@ type RebootPlan struct {
 	Time    string   `json:"time"`    // hh:mm Ortszeit
 	Days    []int    `json:"days"`    // 0 = Sonntag … 6 = Samstag
 	Devices []string `json:"devices"` // leer = keines; ein Neustart braucht eine bewusste Wahl
+	NTP     bool     `json:"ntp"`     // vor dem Neustart NTP-Client einschalten, danach auf Synchronisation warten (ntp.go)
 
 	LastRun     time.Time    `json:"lastRun,omitempty"`
 	LastReason  string       `json:"lastReason,omitempty"`
@@ -179,7 +180,7 @@ func (p *Poller) SaveRebootPlan(a rebootArea, in RebootPlan) error {
 		return fmt.Errorf("mindestens ein Gerät wählen")
 	}
 	return p.updateRebootPlan(a, func(c *RebootPlan) {
-		c.Enabled, c.Time, c.Days, c.Devices = in.Enabled, in.Time, days, ids
+		c.Enabled, c.Time, c.Days, c.Devices, c.NTP = in.Enabled, in.Time, days, ids, in.NTP
 	})
 }
 
@@ -370,7 +371,7 @@ func (p *Poller) probeDevice(ctx context.Context, id string) error {
 }
 
 // rebootStep läuft als Job. Das Tor sitzt darin, also hinter Jobs.serial.
-func (p *Poller) rebootStep(ctx context.Context, id string, gate func(context.Context) error) error {
+func (p *Poller) rebootStep(ctx context.Context, id string, gate func(context.Context) error, ntp bool) error {
 	d, ok := p.st.Get(id)
 	if !ok {
 		return fmt.Errorf("Gerät unbekannt")
@@ -392,7 +393,16 @@ func (p *Poller) rebootStep(ctx context.Context, id string, gate func(context.Co
 		if err := gate(ctx); err != nil {
 			return err
 		}
-		return p.doReboot(ctx, id, x)
+		if ntp {
+			p.rebootNTPBefore(ctx, id, x, d.Identity)
+		}
+		if err := p.doReboot(ctx, id, x); err != nil {
+			return err
+		}
+		if ntp {
+			p.rebootNTPAfter(ctx, id, x, d.Identity)
+		}
+		return nil
 	})
 }
 
@@ -415,7 +425,7 @@ func (p *Poller) RunRebootPlan(a rebootArea, reason string) error {
 		defer p.reboots.end(a)
 		// vor dem Neustart: Aufräumen (Cloud: Bewohner-Hygiene), danach läuft der Neustart ohnehin
 		pre := p.rebootHygiene(p.ctx, a, reason)
-		p.runRebootPlan(p.ctx, a, c.Devices)
+		p.runRebootPlan(p.ctx, a, c.Devices, c.NTP)
 		if pre != "" {
 			p.updateRebootPlan(a, func(s *RebootPlan) { s.LastNote = strings.TrimSpace(pre + " " + s.LastNote) })
 		}
@@ -423,7 +433,7 @@ func (p *Poller) RunRebootPlan(a rebootArea, reason string) error {
 	return nil
 }
 
-func (p *Poller) runRebootPlan(ctx context.Context, a rebootArea, selected []string) {
+func (p *Poller) runRebootPlan(ctx context.Context, a rebootArea, selected []string, ntp bool) {
 	devs := p.areaDevices(a)
 	names := map[string]string{}
 	for _, d := range devs {
@@ -443,7 +453,9 @@ func (p *Poller) runRebootPlan(ctx context.Context, a rebootArea, selected []str
 	parent := p.rebootParents(lctx, devs, true)
 	cancel()
 	order := rebootOrder(selected, parent, func(s string) string { return names[s] })
-	res := rollingReboot(ctx, order, watch, rollOps{probe: p.probeDevice, reboot: p.rebootStep,
+	res := rollingReboot(ctx, order, watch, rollOps{probe: p.probeDevice, reboot: func(ctx context.Context, id string, gate func(context.Context) error) error {
+		return p.rebootStep(ctx, id, gate, ntp)
+	},
 		name: func(s string) string { return names[s] }, settle: rebootSettle, gateFor: rebootGateTimeout, gateEvery: rebootGateEvery})
 	note := ""
 	if len(gone) > 0 {

@@ -178,17 +178,17 @@ func TestRebootPlanSave(t *testing.T) {
 			t.Errorf("%+v: %v", *in, err)
 		}
 	}
-	if err := p.SaveRebootPlan(a, RebootPlan{Enabled: true, Time: "03:30", Days: []int{5, 1, 5}, Devices: []string{ids[1], ids[1], ids[0]}}); err != nil {
+	if err := p.SaveRebootPlan(a, RebootPlan{Enabled: true, Time: "03:30", Days: []int{5, 1, 5}, Devices: []string{ids[1], ids[1], ids[0]}, NTP: true}); err != nil {
 		t.Fatal(err)
 	}
 	c := p.RebootPlanCfg(a)
-	if !c.Enabled || c.Time != "03:30" || !reflect.DeepEqual(c.Days, []int{1, 5}) || !reflect.DeepEqual(c.Devices, []string{ids[1], ids[0]}) {
+	if !c.Enabled || c.Time != "03:30" || !reflect.DeepEqual(c.Days, []int{1, 5}) || !reflect.DeepEqual(c.Devices, []string{ids[1], ids[0]}) || !c.NTP {
 		t.Fatalf("%+v", c)
 	}
 	// Das Ergebnis des letzten Laufs überlebt das Speichern.
 	p.updateRebootPlan(a, func(s *RebootPlan) { s.LastReason = "geplant" })
 	p.SaveRebootPlan(a, RebootPlan{Time: "03:30", Days: []int{1}})
-	if c := p.RebootPlanCfg(a); c.LastReason != "geplant" || c.Enabled || len(c.Devices) != 0 {
+	if c := p.RebootPlanCfg(a); c.LastReason != "geplant" || c.Enabled || len(c.Devices) != 0 || c.NTP {
 		t.Fatalf("%+v", c)
 	}
 }
@@ -214,7 +214,7 @@ func TestRebootPlanViewOrder(t *testing.T) {
 func TestRebootStepGateStopsJob(t *testing.T) {
 	p, ids := rebootPoller(t, "ap")
 	want := errors.New("offline: nebenan")
-	if err := p.rebootStep(context.Background(), ids[0], func(context.Context) error { return want }); !errors.Is(err, want) {
+	if err := p.rebootStep(context.Background(), ids[0], func(context.Context) error { return want }, false); !errors.Is(err, want) {
 		t.Fatal(err)
 	}
 	x, ok := p.jobs.Get(ids[0])
@@ -249,5 +249,11 @@ func TestRunRebootPlanNobodyAnswers(t *testing.T) {
 	}
 	if !strings.Contains(c.LastResults[0].Msg, "offline") || !strings.Contains(c.LastResults[1].Msg, "abgebrochen") || !strings.Contains(c.LastNote, "nicht-gewaehlt") {
 		t.Fatalf("%+v", c)
+	}
+}
+
+func TestNTPSynced(t *testing.T) {
+	if !ntpSynced("synchronized") || ntpSynced("started") || ntpSynced("waiting") || ntpSynced("") {
+		t.Error("ntpSynced")
 	}
 }

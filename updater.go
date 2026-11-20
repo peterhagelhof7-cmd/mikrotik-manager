@@ -314,6 +314,9 @@ func (p *Poller) updateDevice(ctx context.Context, id string, x *Job, firmware b
 		return err
 	}
 	if s.Latest == "" {
+		if hint := p.updateDiagnose(ctx, cl, x, name); hint != "" {
+			return fmt.Errorf("Update-Server nicht erreichbar (%s) – %s", s.Status, hint)
+		}
 		return fmt.Errorf("Update-Server nicht erreichbar (%s)", s.Status)
 	}
 	rosUpd := s.Latest != s.Version
