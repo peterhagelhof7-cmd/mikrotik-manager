@@ -509,23 +509,25 @@ func (p *Poller) doChange(ctx context.Context, id string, x *Job, req ChangeReq)
 	}
 	p.jobs.step(x, name, "Rückroll-Wächter aktiv (%s), führe aus: %s", rollbackAfter, strings.Join(plan.Steps, "; "))
 	rctx, cancel = context.WithTimeout(ctx, 15*time.Second)
-	_, err = cl.RunContext(rctx, "/execute", "=script="+applyScript(tag, plan.Apply))
+	_, err = cl.RunContext(rctx, "/execute", "=script="+applyScript(tag, plan.Apply, p.onErrorOK(id)))
 	cancel()
 	if err != nil {
 		return fmt.Errorf("Ausführen: %w (Wächter rollt ggf. zurück)", err)
 	}
 
 	// Neue Adresse möglichst noch über die alte Verbindung erfahren
-	newIP := ""
+	newIP, devErr := "", ""
 	if plan.NewIP {
 		newIP = p.watchDHCPAddress(ctx, cl, plan.Bridge)
 		if newIP != "" {
 			p.jobs.step(x, name, "DHCP-Adresse bezogen: %s", newIP)
 		}
 	} else {
-		switch p.waitApplied(ctx, cl, tag, 90*time.Second) {
+		st, msg := p.waitApplied(ctx, cl, tag, 90*time.Second)
+		devErr = msg
+		switch st {
 		case "failed":
-			p.jobs.step(x, name, "das Gerät meldet einen Fehler beim Ausführen")
+			p.jobs.step(x, name, "das Gerät meldet einen Fehler beim Ausführen%s", withReason(msg))
 		case "":
 			time.Sleep(8 * time.Second) // Verbindung weg oder keine Meldung
 		}
@@ -575,10 +577,10 @@ func (p *Poller) doChange(ctx context.Context, id string, x *Job, req ChangeReq)
 	if !check.Noop {
 		// Gerät ist erreichbar → gleich zurückrollen statt 5 Minuten auf den Wächter zu warten.
 		p.jobs.step(x, name, "Änderung nicht vollständig wirksam (%s) – rolle sofort zurück …", strings.Join(check.Steps, "; "))
-		uerr := p.runQuiet(ctx, cl, plan.Undo, time.Minute)
+		uerr := p.runQuiet(ctx, cl, id, plan.Undo, time.Minute)
 		if uerr == nil && undoFile != "" {
 			// Backup wird geladen, das Gerät startet neu
-			return fmt.Errorf("Änderung nicht vollständig wirksam – das Gerät lädt das Backup von vorher und startet neu")
+			return fmt.Errorf("Änderung nicht vollständig wirksam%s – das Gerät lädt das Backup von vorher und startet neu", deviceSaid(devErr))
 		}
 		if uerr == nil {
 			rctx, cancel = context.WithTimeout(ctx, 30*time.Second)
@@ -587,6 +589,9 @@ func (p *Poller) doChange(ctx context.Context, id string, x *Job, req ChangeReq)
 		}
 		if uerr != nil {
 			return fmt.Errorf("Änderung nicht vollständig wirksam, sofortiges Zurückrollen fehlgeschlagen (%v) – Wächter rollt zurück", uerr)
+		}
+		if devErr != "" {
+			return fmt.Errorf("Änderung nicht vollständig wirksam%s – alter Zustand wiederhergestellt", deviceSaid(devErr))
 		}
 		return fmt.Errorf("Änderung nicht vollständig wirksam – alter Zustand wiederhergestellt (vermutlich lehnt das Gerät einen Wert ab)")
 	}
@@ -626,8 +631,29 @@ func (p *Poller) doChange(ctx context.Context, id string, x *Job, req ChangeReq)
 
 // applyScript umschließt eine Änderung. Das Ergebnis steht in einer globalen Variable
 // (waitApplied), zusätzlich im Log: Das ist auf manchen Geräten leer bzw. nicht per API lesbar.
-func applyScript(tag, src string) string {
+// Mit withMsg (RouterOS ab 7.13, :onerror) steht hinter „failed <tag>“ die Fehlermeldung
+// des Geräts – ältere Versionen kennen :onerror nicht und bekommen nur „failed“.
+func applyScript(tag, src string, withMsg bool) string {
+	if withMsg {
+		return ":global mmApplied \"\"\n:onerror mmErr in={\n" + src + "\n} do={ :set mmApplied (\"failed " + tag + " \" . $mmErr); :log error \"mm-apply-failed " + tag + "\" }\n" +
+			":if ($mmApplied = \"\") do={ :set mmApplied \"done " + tag + "\"; :log info \"mm-apply-done " + tag + "\" }\n"
+	}
 	return ":global mmApplied \"\"\n:do {\n" + src + "\n:set mmApplied \"done " + tag + "\"\n:log info \"mm-apply-done " + tag + "\"\n} on-error={ :set mmApplied \"failed " + tag + "\"; :log error \"mm-apply-failed " + tag + "\" }\n"
+}
+
+// rosOnError: kennt die RouterOS-Version :onerror (ab 7.13)?
+func rosOnError(version string) bool {
+	var major, minor int
+	if n, _ := fmt.Sscanf(strings.TrimSpace(version), "%d.%d", &major, &minor); n < 2 {
+		return false
+	}
+	return major > 7 || (major == 7 && minor >= 13)
+}
+
+// onErrorOK: Version des Geräts aus dem letzten Abruf.
+func (p *Poller) onErrorOK(id string) bool {
+	d, _ := p.st.Get(id)
+	return rosOnError(d.Version)
 }
 
 // watchScript führt nach secs Sekunden den Rückweg aus, falls der Merker noch da ist.
@@ -640,18 +666,34 @@ func watchScript(secs int, marker, undo string) string {
 // runQuiet führt ein Skript aus, ohne dass sein Text ins Log gelangt, und wartet auf das
 // Ergebnis. Bleibt es aus (Verbindung weg, Gerät startet neu), zählt das nicht als Fehler:
 // Die Aufrufer prüfen den Zustand danach selbst.
-func (p *Poller) runQuiet(ctx context.Context, cl *routeros.Client, src string, timeout time.Duration) error {
+func (p *Poller) runQuiet(ctx context.Context, cl *routeros.Client, id, src string, timeout time.Duration) error {
 	tag := "q" + randomPassword(8)
 	rctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	_, err := cl.RunContext(rctx, "/execute", "=script="+applyScript(tag, src))
+	_, err := cl.RunContext(rctx, "/execute", "=script="+applyScript(tag, src, p.onErrorOK(id)))
 	cancel()
 	if err != nil {
 		return err
 	}
-	if p.waitApplied(ctx, cl, tag, timeout) == "failed" {
-		return fmt.Errorf("das Gerät meldet einen Fehler im Skript")
+	if st, msg := p.waitApplied(ctx, cl, tag, timeout); st == "failed" {
+		return fmt.Errorf("das Gerät meldet einen Fehler im Skript%s", withReason(msg))
 	}
 	return nil
+}
+
+// deviceSaid: „ (Gerät meldet: …)“ oder leer.
+func deviceSaid(msg string) string {
+	if msg == "" {
+		return ""
+	}
+	return " (Gerät meldet: " + msg + ")"
+}
+
+// withReason hängt die Meldung des Geräts an, falls es eine gibt.
+func withReason(msg string) string {
+	if msg == "" {
+		return ""
+	}
+	return ": " + msg
 }
 
 // waitRadios gibt eingeschalteten Funkteilen kurz Zeit und nennt die, die aus bleiben.
@@ -698,25 +740,35 @@ func installScripts(ctx context.Context, cl *routeros.Client, plan Plan, tag str
 }
 
 // waitApplied wartet auf das Ergebnis des Apply-Skripts (globale Variable
-// mmApplied = "done <tag>" | "failed <tag>"): "done", "failed" oder ""
-// (kein Ergebnis, z. B. Verbindung weg).
-func (p *Poller) waitApplied(ctx context.Context, cl *routeros.Client, tag string, timeout time.Duration) string {
+// mmApplied = "done <tag>" | "failed <tag> [Meldung]"): "done", "failed" oder ""
+// (kein Ergebnis, z. B. Verbindung weg), dazu die Fehlermeldung des Geräts.
+func (p *Poller) waitApplied(ctx context.Context, cl *routeros.Client, tag string, timeout time.Duration) (string, string) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		l, err := printAll(rctx, cl, "/system/script/environment/print", "?name=mmApplied")
 		cancel()
 		if err != nil {
-			return ""
+			return "", ""
 		}
 		for _, m := range l {
-			if st, t, _ := strings.Cut(m["value"], " "); t == tag && (st == "done" || st == "failed") {
-				return st
+			if st, msg, ok := parseApplied(m["value"], tag); ok {
+				return st, msg
 			}
 		}
 		time.Sleep(time.Second)
 	}
-	return ""
+	return "", ""
+}
+
+// parseApplied liest „done <tag>“ bzw. „failed <tag> <Meldung>“.
+func parseApplied(v, tag string) (st, msg string, ok bool) {
+	st, rest, _ := strings.Cut(v, " ")
+	t, msg, _ := strings.Cut(rest, " ")
+	if t != tag || (st != "done" && st != "failed") {
+		return "", "", false
+	}
+	return st, strings.TrimSpace(msg), true
 }
 
 // removeScripts bestätigt eine Änderung: Ohne den Merker tut der Wächter nichts.

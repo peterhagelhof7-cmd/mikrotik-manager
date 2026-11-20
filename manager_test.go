@@ -849,9 +849,32 @@ func TestMLDRelease(t *testing.T) {
 }
 
 func TestScriptsKeepSecretsOffLog(t *testing.T) {
-	a := applyScript("120000", `/interface wifi security add passphrase="geheim"`)
-	if !strings.Contains(a, "geheim") || !strings.Contains(a, `:set mmApplied "done 120000"`) || !strings.Contains(a, `:set mmApplied "failed 120000"`) {
+	a := applyScript("120000", `/interface wifi security add passphrase="geheim"`, false)
+	if !strings.Contains(a, "geheim") || !strings.Contains(a, `:set mmApplied "done 120000"`) || !strings.Contains(a, `:set mmApplied "failed 120000"`) || strings.Contains(a, ":onerror") {
 		t.Fatal(a)
+	}
+	// ab 7.13: Meldung des Geräts hinter dem Tag
+	a = applyScript("120000", `/interface wireless set [find name="wlan1"] country="germany"`, true)
+	if !strings.HasPrefix(a, ":global mmApplied \"\"\n:onerror mmErr in={\n/interface wireless set") ||
+		!strings.Contains(a, `:set mmApplied ("failed 120000 " . $mmErr)`) || !strings.Contains(a, `:if ($mmApplied = "") do={ :set mmApplied "done 120000"`) {
+		t.Fatal(a)
+	}
+	for v, want := range map[string]bool{"7.25.1": true, "7.13": true, "7.12.1": false, "6.49.18": false, "7.20beta3": true, "8.0": true, "": false} {
+		if rosOnError(v) != want {
+			t.Errorf("rosOnError(%q) != %v", v, want)
+		}
+	}
+	for v, want := range map[string][2]string{
+		"done 120000":                          {"done", ""},
+		"failed 120000":                        {"failed", ""},
+		"failed 120000 failure: invalid value": {"failed", "failure: invalid value"},
+	} {
+		if st, msg, ok := parseApplied(v, "120000"); !ok || st != want[0] || msg != want[1] {
+			t.Errorf("parseApplied(%q) = %q %q %v", v, st, msg, ok)
+		}
+	}
+	if _, _, ok := parseApplied("failed 999999 x", "120000"); ok {
+		t.Error("fremder Tag angenommen")
 	}
 	w := watchScript(300, "mm-undo-1", `/x "alt"`)
 	if !strings.HasPrefix(w, ":delay 300s\n") || !strings.Contains(w, `/system script find name="mm-undo-1"`) || !strings.Contains(w, `/x "alt"`) ||

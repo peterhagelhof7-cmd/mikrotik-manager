@@ -1104,7 +1104,7 @@ func (p *Poller) applyWifiConfig(ctx context.Context, id string, cl *routeros.Cl
 	}
 
 	p.jobs.step(x, name, "spiele WLAN-Konfiguration ein …")
-	if err := p.runQuiet(rctx, cl, script, 90*time.Second); err != nil {
+	if err := p.runQuiet(rctx, cl, id, script, 90*time.Second); err != nil {
 		return fmt.Errorf("Konfiguration einspielen: %w", err)
 	}
 

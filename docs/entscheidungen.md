@@ -637,3 +637,13 @@ Ist er gesetzt, schaltet der Manager vor jedem Neustart den NTP-Client ein, fall
 wartet nach dem Neustart bis zu 2 Minuten auf „synchronized“. Das Ergebnis steht im Job-Protokoll,
 das Einschalten im Audit-Log. Bleibt die Zeit unsynchron, ist das nur ein Hinweis – die Routine
 läuft weiter.
+
+### 2026-11-20 – Fehlermeldung des Geräts im Job-Protokoll
+
+Lehnte ein Gerät eine Änderung ab, stand im Protokoll nur „das Gerät meldet einen Fehler beim
+Ausführen“ – das Änderungsskript fing den Fehler mit `:do … on-error` ab, ohne den Text. Anlass:
+ein hAP (RB951Ui-2nD) nahm `country=germany` nicht an, der Grund war nicht zu sehen. Ab RouterOS
+7.13 umschließt der Manager das Skript mit `:onerror`, schreibt die Meldung hinter „failed <tag>“
+in die globale Variable `mmApplied` und zeigt sie im Protokoll und in der Fehlermeldung
+(„Gerät meldet: …“). Ältere Versionen kennen `:onerror` nicht und behalten das bisherige Skript.
+Maßgeblich ist die Version aus dem letzten Abruf.

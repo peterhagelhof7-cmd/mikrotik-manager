@@ -287,7 +287,7 @@ func (p *Poller) doCloudMove(ctx context.Context, c cloudCode, id string, x *Job
 	}
 	dropIface := func() {
 		if created {
-			p.runQuiet(rctx, cl, try("/interface wireguard remove [find name="+cloudIface+"]"), 30*time.Second)
+			p.runQuiet(rctx, cl, id, try("/interface wireguard remove [find name="+cloudIface+"]"), 30*time.Second)
 		}
 	}
 	if len(l) == 0 || l[0]["public-key"] == "" {
@@ -302,7 +302,7 @@ func (p *Poller) doCloudMove(ctx context.Context, c cloudCode, id string, x *Job
 		return err
 	}
 	p.jobs.step(x, name, "richte den Tunnel ein …")
-	runErr := p.runQuiet(rctx, cl, script, 30*time.Second)
+	runErr := p.runQuiet(rctx, cl, id, script, 30*time.Second)
 	up := false
 	if runErr == nil {
 		p.jobs.step(x, name, "warte auf den Tunnel (bis %s) …", cloudHandshake)
@@ -312,7 +312,7 @@ func (p *Poller) doCloudMove(ctx context.Context, c cloudCode, id string, x *Job
 	}
 	if !up {
 		p.jobs.step(x, name, "kein Tunnel – nehme die Änderung zurück …")
-		if err := p.runQuiet(rctx, cl, cloudUndo(uid != "", created), 30*time.Second); err != nil {
+		if err := p.runQuiet(rctx, cl, id, cloudUndo(uid != "", created), 30*time.Second); err != nil {
 			return fmt.Errorf("Tunnel steht nicht, Rücknahme fehlgeschlagen: %v", err)
 		}
 		if runErr != nil {
