@@ -161,6 +161,12 @@ func TestRouterHash(t *testing.T) {
 	if a == routerHash(c, map[string]string{"ether2": "a"}) {
 		t.Fatal("Konfiguration zählt nicht")
 	}
+	// DHCP-Ende ±1 muss die Vorschau auf „weicht ab“ bringen.
+	c = routerSample()
+	c.Nets[0].Last = "192.168.55.199"
+	if a == routerHash(c, map[string]string{"ether2": "a"}) {
+		t.Fatal("DHCP-Ende zählt nicht")
+	}
 }
 
 func TestSaveRouterKeepsSecret(t *testing.T) {
