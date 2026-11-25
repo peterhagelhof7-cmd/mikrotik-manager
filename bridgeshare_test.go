@@ -53,6 +53,11 @@ func TestCentralUsesRouterBridgeEntries(t *testing.T) {
 	if !strings.Contains(p.Apply, `/interface bridge vlan set *5 tagged="bridge1,ether1,ether2"`) {
 		t.Errorf("Router-Eintrag:\n%s", p.Apply)
 	}
+	// Vorschau-Text: Router-VLAN nicht als „getaggt auf“, keine Switch-Warnung
+	if all, warn := strings.Join(p.Steps, "\n"), strings.Join(p.Warn, "\n"); strings.Contains(all, "VLAN 20 getaggt") ||
+		!strings.Contains(all, "VLAN 20 kommt vom Router-Tab") || strings.Contains(warn, "Switch-Port") {
+		t.Errorf("Vorschau-Text:\n%s\n--- Warnungen:\n%s", all, warn)
+	}
 	e := bi.rt["20"]
 	e.Tagged = []string{"bridge1", "ether1", "ether2"}
 	bi.rt["20"] = e

@@ -689,4 +689,7 @@ Entscheidung (bridgeshare.go): je VLAN genau ein Eintrag.
   WLAN-Eintrag dieselbe VLAN-ID, ersetzt ihn der Router-Eintrag und übernimmt dessen
   WLAN-Schnittstellen; beim erneuten Ausrollen bleiben sie im eigenen Eintrag erhalten.
 - Die Ethernet-Ports am Router-Gerät gehören dem Router-Tab, auch für WLAN-VLANs.
-Am Gerät noch ungetestet.
+- Die Vorschau der WLAN-Verwaltung nennt solche VLANs „kommt vom Router-Tab“ statt „getaggt auf
+  …“ und warnt dafür nicht vor Switch-Ports (sie laufen über keinen).
+Am Gerät teilweise getestet (11/2026); offen: Router erneut ausrollen, während
+WLAN-Schnittstellen im Router-Eintrag stehen.

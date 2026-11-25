@@ -537,13 +537,24 @@ func planCentralState(s *wlanState, bi bridgeInfo, c CentralWLAN, chan2 string) 
 		p.Steps = append(p.Steps, line+" – "+strings.Join(nets, ", ")+" (weitere Netze als virtuelle WLANs)")
 	}
 	if len(vlans) > 0 {
-		var vs []string
+		// VLANs im Eintrag des Routers (Gerät ist auch Router) laufen nicht über einen Switch-Port
+		// und bekommen keinen eigenen Eintrag – Text und Warnung nur für die eigenen.
+		var vs, rs []string
 		for _, v := range vlans {
-			vs = append(vs, fmt.Sprint(v))
+			if _, ok := bi.routerOwns(strconv.Itoa(v)); ok {
+				rs = append(rs, fmt.Sprint(v))
+			} else {
+				vs = append(vs, fmt.Sprint(v))
+			}
 		}
-		p.Steps = append(p.Steps, fmt.Sprintf("Bridge %s: VLAN %s getaggt auf %s, VLAN-Filter an; Verwaltung des Geräts bleibt ungetaggt", br, strings.Join(vs, ", "), tagged))
-		p.Warn = append(p.Warn,
-			fmt.Sprintf("Der Switch-Port zu diesem Gerät muss VLAN %s getaggt durchreichen – sonst haben die Clients dieser WLANs kein Netz (die Prüfung des Managers merkt das nicht).", strings.Join(vs, ", ")))
+		if len(vs) > 0 {
+			p.Steps = append(p.Steps, fmt.Sprintf("Bridge %s: VLAN %s getaggt auf %s, VLAN-Filter an; Verwaltung des Geräts bleibt ungetaggt", br, strings.Join(vs, ", "), tagged))
+			p.Warn = append(p.Warn,
+				fmt.Sprintf("Der Switch-Port zu diesem Gerät muss VLAN %s getaggt durchreichen – sonst haben die Clients dieser WLANs kein Netz (die Prüfung des Managers merkt das nicht).", strings.Join(vs, ", ")))
+		}
+		if len(rs) > 0 {
+			p.Steps = append(p.Steps, fmt.Sprintf("Bridge %s: VLAN %s kommt vom Router-Tab dieses Geräts (kein eigener Eintrag), VLAN-Filter an", br, strings.Join(rs, ", ")))
+		}
 		if !bi.filtering {
 			p.Warn = append(p.Warn, "Der VLAN-Filter der Bridge kann auf manchen Geräten die Hardware-Beschleunigung abschalten (mehr CPU-Last bei viel Verkehr).")
 		}
