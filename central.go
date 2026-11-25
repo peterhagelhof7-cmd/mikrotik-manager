@@ -209,10 +209,18 @@ func netKey(ssid, auth, pass string, hidden bool, vlan int) string {
 // bridgeInfo: was die zentrale Verwaltung von der Bridge braucht (VLANs).
 type bridgeInfo struct {
 	name      string
-	filtering bool           // vlan-filtering an
-	pvid      map[string]int // Port → PVID
-	ethers    []string       // Ethernet-Ports der Bridge (tragen die VLANs getaggt)
-	mm        map[int]string // vom Manager angelegte Bridge-VLANs: VLAN → tagged
+	filtering bool                   // vlan-filtering an
+	pvid      map[string]int         // Port → PVID
+	ethers    []string               // Ethernet-Ports der Bridge (tragen die VLANs getaggt)
+	mm        map[int]string         // vom Manager angelegte Bridge-VLANs: VLAN → tagged
+	eth       map[string]bool        // alle Ethernet-Schnittstellen des Geräts
+	rt        map[string]bridgeEntry // Einträge des Router-Tabs (Gerät ist auch Router): VLAN-ID → Eintrag
+}
+
+// routerOwns: Das VLAN liegt in einem Eintrag des Router-Tabs.
+func (b bridgeInfo) routerOwns(ids string) (bridgeEntry, bool) {
+	e, ok := b.rt[ids]
+	return e, ok
 }
 
 // vlanOf: VLAN eines Bridge-Ports (PVID 1 = ungetaggt = kein VLAN).
@@ -224,13 +232,13 @@ func (b bridgeInfo) vlanOf(port string) int {
 }
 
 func readBridge(ctx context.Context, cl *routeros.Client) bridgeInfo {
-	b := bridgeInfo{pvid: map[string]int{}, mm: map[int]string{}}
+	b := bridgeInfo{pvid: map[string]int{}, mm: map[int]string{}, eth: map[string]bool{}, rt: map[string]bridgeEntry{}}
 	l, err := printAll(ctx, cl, "/interface/bridge/print", "=.proplist=name,vlan-filtering")
 	if err != nil || len(l) == 0 {
 		return b
 	}
 	b.name, b.filtering = l[0]["name"], l[0]["vlan-filtering"] == "true"
-	eth := map[string]bool{}
+	eth := b.eth
 	if el, err := printAll(ctx, cl, "/interface/ethernet/print", "=.proplist=name"); err == nil {
 		for _, m := range el {
 			eth[m["name"]] = true
@@ -249,8 +257,13 @@ func readBridge(ctx context.Context, cl *routeros.Client) bridgeInfo {
 		}
 	}
 	sort.Strings(b.ethers)
-	if vl, err := printAll(ctx, cl, "/interface/bridge/vlan/print", "=.proplist=bridge,vlan-ids,tagged,comment"); err == nil {
+	if vl, err := printAll(ctx, cl, "/interface/bridge/vlan/print", "=.proplist=.id,bridge,vlan-ids,tagged,untagged,comment,dynamic"); err == nil {
 		for _, m := range vl {
+			if m["bridge"] == b.name && m["comment"] == routerComment && m["dynamic"] != "true" {
+				b.rt[m["vlan-ids"]] = bridgeEntry{ID: m[".id"], IDs: m["vlan-ids"], Comment: m["comment"],
+					Tagged: splitPorts(m["tagged"]), Untagged: splitPorts(m["untagged"])}
+				continue
+			}
 			if m["bridge"] == b.name && m["comment"] == mmComment {
 				v, _ := strconv.Atoi(m["vlan-ids"])
 				t := strings.Split(m["tagged"], ",")
@@ -439,11 +452,23 @@ func planCentralState(s *wlanState, bi bridgeInfo, c CentralWLAN, chan2 string) 
 		}
 	}
 	tagged := strings.Join(meshTagged(bi.ethers, meshOn), ",")
+	// Gerät ist auch Router (bridgeshare.go): VLANs, die der Router-Tab schon an der Bridge hat,
+	// bekommen keinen eigenen Eintrag – die WLAN-Verwaltung setzt dort nur ihre WLAN-Schnittstellen.
+	wantRt := map[string][]string{}
+	for _, v := range vlans {
+		if _, ok := bi.routerOwns(strconv.Itoa(v)); ok {
+			wantRt[strconv.Itoa(v)] = wlanPorts(meshTagged(bi.ethers, meshOn), bi.eth, br)
+		}
+	}
+	rtSet := map[string][]string{} // .id des Router-Eintrags → tagged
 	var bd []string
 	if len(vlans) > 0 && !bi.filtering {
 		bd = append(bd, "VLAN-Filter aus")
 	}
 	for _, v := range vlans {
+		if _, ok := bi.routerOwns(strconv.Itoa(v)); ok {
+			continue
+		}
 		if t, ok := bi.mm[v]; !ok {
 			bd = append(bd, fmt.Sprintf("VLAN %d fehlt", v))
 		} else if t != tagged {
@@ -453,6 +478,16 @@ func planCentralState(s *wlanState, bi bridgeInfo, c CentralWLAN, chan2 string) 
 	for v := range bi.mm {
 		if !containsInt(vlans, v) {
 			bd = append(bd, fmt.Sprintf("VLAN %d wird nicht mehr gebraucht", v))
+		} else if _, ok := bi.routerOwns(strconv.Itoa(v)); ok {
+			bd = append(bd, fmt.Sprintf("VLAN %d steht doppelt (auch im Eintrag des Routers)", v))
+		}
+	}
+	for ids, e := range bi.rt {
+		want := unionPorts(routerOwnPorts(e.Tagged, bi.eth, br), wantRt[ids])
+		if !samePorts(want, e.Tagged) {
+			bd = append(bd, fmt.Sprintf("VLAN %s (Eintrag des Routers): WLAN-Schnittstellen %s statt %s",
+				ids, portsLabel(wlanPorts(e.Tagged, bi.eth, br)), portsLabel(wantRt[ids])))
+			rtSet[e.ID] = want
 		}
 	}
 	if len(bd) > 0 {
@@ -523,7 +558,10 @@ func planCentralState(s *wlanState, bi bridgeInfo, c CentralWLAN, chan2 string) 
 		p.Apply += meshScriptRos(meshOn, c, meshRadio(radios), bi.name)
 		p.Steps = append(p.Steps, meshlinkSummary(meshOn, c, meshRadio(radios)))
 	}
-	p.Apply += centralBridgeScript(bi, radios, vlans, meshTagged(bi.ethers, meshOn))
+	if len(rtSet) > 0 {
+		p.Steps = append(p.Steps, "Gerät ist auch Router: WLAN-Schnittstellen in die VLAN-Einträge des Routers eintragen (kein eigener Eintrag für dieselben VLANs)")
+	}
+	p.Apply += centralBridgeScript(bi, radios, vlans, meshTagged(bi.ethers, meshOn), rtSet)
 	// p.Undo setzt doChange: Backup auf dem Gerät laden.
 	return p, nil
 }
@@ -564,7 +602,7 @@ func centralVLANs(radios []*centralRadio) []int {
 // centralBridgeScript setzt die PVID der WLAN-Ports und die Bridge-VLANs.
 // Reihenfolge: erst Ports und VLAN-Tabelle, zuletzt den VLAN-Filter einschalten.
 // Eigene (nicht vom Manager angelegte) Bridge-VLANs bleiben unangetastet.
-func centralBridgeScript(bi bridgeInfo, radios []*centralRadio, vlans []int, tagged []string) string {
+func centralBridgeScript(bi bridgeInfo, radios []*centralRadio, vlans []int, tagged []string, rtSet map[string][]string) string {
 	if bi.name == "" {
 		return ""
 	}
@@ -594,7 +632,19 @@ func centralBridgeScript(bi bridgeInfo, radios []*centralRadio, vlans []int, tag
 		b.WriteString(try("/interface bridge vlan remove [find comment=" + q(mmComment) + "]"))
 	}
 	for _, v := range vlans {
+		if _, ok := bi.routerOwns(strconv.Itoa(v)); ok {
+			continue // Eintrag des Routers, WLAN-Schnittstellen kommen unten dazu
+		}
 		b.WriteString(fmt.Sprintf("/interface bridge vlan add bridge=%s vlan-ids=%d tagged=%s comment=%s\n", q(bi.name), v, strings.Join(tagged, ","), q(mmComment)))
+	}
+	ids := make([]string, 0, len(rtSet))
+	for id := range rtSet {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		// Ports des Routers bleiben, nur die WLAN-Schnittstellen ändern sich (bridgeshare.go)
+		b.WriteString("/interface bridge vlan set " + id + " tagged=" + q(strings.Join(rtSet[id], ",")) + "\n")
 	}
 	if len(vlans) > 0 && !bi.filtering {
 		b.WriteString("/interface bridge set [find name=" + q(bi.name) + "] vlan-filtering=yes\n")

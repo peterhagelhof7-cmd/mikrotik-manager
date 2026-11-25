@@ -671,3 +671,22 @@ Befehl, der das Land setzt (Einzeländerung und zentrales WLAN/Vorlage, Paket wi
 `:onerror`, liest bei dieser Meldung die Zahl aus und wiederholt den Befehl mit
 `antenna-gain=<Mindestwert>`. Andere Fehler gehen unverändert weiter. Eine höhere
 Antennenverstärkung senkt nur die Sendeleistung. Der Rückweg setzt den alten Wert.
+
+## 2026-11-25 – Router und AP im selben Gerät: ein Bridge-VLAN-Eintrag je VLAN
+
+Anlass: Chateau LTE als Router und einziger Access Point. Router-Tab und zentrale
+WLAN-Verwaltung schrieben in dieselbe Bridge-VLAN-Tabelle: Das Router-Ausrollen löschte alle
+statischen Einträge (auch die der WLAN-Verwaltung), die WLAN-Verwaltung hätte danach einen
+zweiten Eintrag mit derselben VLAN-ID angelegt. RouterOS lehnt das seit 7.17 ab („bridge -
+disallow duplicate static VLAN entries“).
+
+Entscheidung (bridgeshare.go): je VLAN genau ein Eintrag.
+- Hat der Router-Tab das VLAN (Netz, Port-VLAN), gehört der Eintrag dem
+  Router (`mm-router`). Bridge und Ethernet-Ports bestimmt der Router, alle anderen Ports
+  (WLAN-Schnittstellen, Meshlink) die WLAN-Verwaltung. Sie setzt nur diese im Router-Eintrag
+  (`set <id> tagged=…`) und legt für das VLAN keinen eigenen an.
+- Das Router-Ausrollen räumt nur fremde Einträge weg, nicht die der WLAN-Verwaltung. Hat ein
+  WLAN-Eintrag dieselbe VLAN-ID, ersetzt ihn der Router-Eintrag und übernimmt dessen
+  WLAN-Schnittstellen; beim erneuten Ausrollen bleiben sie im eigenen Eintrag erhalten.
+- Die Ethernet-Ports am Router-Gerät gehören dem Router-Tab, auch für WLAN-VLANs.
+Am Gerät noch ungetestet.

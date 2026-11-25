@@ -593,7 +593,33 @@ func routerHash(c RouterCfg, secrets map[string]string) string {
 // routerScript baut die ganze Konfiguration. Die Reihenfolge räumt erst auf, damit nichts an
 // alten Namen oder Adressen hängt; das Anmachen der VLAN-Filterung kommt zuletzt.
 func routerScript(c RouterCfg, secrets map[string]string, bridge string) string {
+	return routerScriptLive(c, secrets, bridge, bridgeLive{})
+}
+
+// routerScriptLive: wie routerScript, mit der Bridge-VLAN-Tabelle des Geräts. Einträge der
+// zentralen WLAN-Verwaltung bleiben stehen; hat der Router dieselbe VLAN-ID, ersetzt sein Eintrag
+// den der WLAN-Verwaltung und übernimmt deren WLAN-Schnittstellen (siehe bridgeshare.go).
+func routerScriptLive(c RouterCfg, secrets map[string]string, bridge string, live bridgeLive) string {
 	var b strings.Builder
+	mine := map[string]bool{} // VLAN-IDs der Router-Einträge
+	for _, v := range routerVLANs(c) {
+		if v.Range != "" {
+			mine[v.Range] = true
+		} else {
+			mine[strconv.Itoa(v.ID)] = true
+		}
+	}
+	extra := map[string][]string{} // VLAN-ID → WLAN-Schnittstellen aus vorhandenen Einträgen
+	var takeOver []string          // Einträge der WLAN-Verwaltung mit VLAN-ID des Routers
+	for _, e := range live.entries {
+		if !mine[e.IDs] {
+			continue
+		}
+		extra[e.IDs] = unionPorts(extra[e.IDs], wlanPorts(e.Tagged, live.eth, bridge))
+		if e.Comment == mmComment {
+			takeOver = append(takeOver, e.ID)
+		}
+	}
 	cm := q(routerComment)
 	br := q(bridge)
 	tun := q(routerTunnel)
@@ -618,10 +644,14 @@ func routerScript(c RouterCfg, secrets map[string]string, bridge string) string 
 		"/interface list member remove [find where comment~" + q("^mm-bewohner:") + "]",
 		"/interface list member remove [find comment=" + cm + "]",
 		"/interface list remove [find comment=" + cm + "]",
-		"/interface bridge vlan remove [find where bridge=" + br + " and dynamic=no]",
+		// Einträge der zentralen WLAN-Verwaltung bleiben (gleiches Gerät = Router und AP)
+		"/interface bridge vlan remove [find where bridge=" + br + " and dynamic=no and comment!=" + q(mmComment) + "]",
 		"/interface vlan remove [find comment=" + cm + "]",
 	} {
 		b.WriteString(try(l))
+	}
+	for _, id := range takeOver {
+		b.WriteString(try("/interface bridge vlan remove " + id))
 	}
 	b.WriteString("# bridge\n")
 	b.WriteString(":if ([:len [/interface bridge find name=" + br + "]] = 0) do={ /interface bridge add name=" + br + " comment=" + cm + " }\n")
@@ -725,6 +755,9 @@ func routerScript(c RouterCfg, secrets map[string]string, bridge string) string 
 		ids := strconv.Itoa(v.ID)
 		if v.Range != "" {
 			ids = v.Range
+		}
+		if len(extra[ids]) > 0 {
+			tagged = unionPorts(tagged, extra[ids])
 		}
 		fmt.Fprintf(&b, "/interface bridge vlan add bridge=%s vlan-ids=%s", br, ids)
 		if len(tagged) > 0 {
@@ -948,7 +981,11 @@ func (p *Poller) planRouter(ctx context.Context, cl *routeros.Client, id string)
 		pl.NewAddr = lan
 		pl.Warn = append(pl.Warn, "Der Manager verbindet sich danach mit "+lan+" neu. Er muss dieses Netz erreichen, sonst rollt das Gerät nach 5 Minuten zurück.")
 	}
-	pl.Apply = routerScript(c, secrets, bridge) + "/system script add name=" + q(routerState) + " comment=" + q(routerComment) + " source=" + q("# "+hash) + "\n"
+	bl, err := readBridgeLive(ctx, cl, bridge)
+	if err != nil {
+		return pl, err
+	}
+	pl.Apply = routerScriptLive(c, secrets, bridge, bl) + "/system script add name=" + q(routerState) + " comment=" + q(routerComment) + " source=" + q("# "+hash) + "\n"
 	return pl, nil
 }
 
